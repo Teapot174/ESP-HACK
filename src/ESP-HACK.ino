@@ -42,7 +42,7 @@ bool inIRAttack = false;
 
 byte gpioMenuIndex = 0;
 
-// Режим ожидания 
+// Режим ожидания
 unsigned long lastActivityTime = 0;
 const unsigned long STANDBY_TIMEOUT = 30000; // 30сек
 bool inStandby = false;
@@ -76,10 +76,8 @@ void enterStandby() {
 void drawStandbyAnimation() {
   display.clearDisplay();
   display.drawBitmap(dvd_x, dvd_y, bitmap_dvd_logo, DVD_LOGO_WIDTH, DVD_LOGO_HEIGHT, SH110X_WHITE);
-
   dvd_x += dvd_dx * DVD_SPEED;
   dvd_y += dvd_dy * DVD_SPEED;
-
   if (dvd_x <= 0 || dvd_x + DVD_LOGO_WIDTH >= display.width()) {
     dvd_dx = -dvd_dx;
     dvd_x = (dvd_x <= 0) ? 0 : display.width() - DVD_LOGO_WIDTH;
@@ -88,7 +86,6 @@ void drawStandbyAnimation() {
     dvd_dy = -dvd_dy;
     dvd_y = (dvd_y <= 0) ? 0 : display.height() - DVD_LOGO_HEIGHT;
   }
-
   display.display();
 }
 
@@ -141,11 +138,9 @@ void setup() {
     for(;;);
   }
 
-  Serial.println(F("Initializing SD card..."));
   sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
   sdSPI.setFrequency(4000000);
   if (!SD.begin(-1, sdSPI)) {
-    Serial.println(F("SD card initialization failed!"));
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SH110X_WHITE);
@@ -156,7 +151,6 @@ void setup() {
     display.display();
     for(;;);
   }
-  Serial.println(F("SD card initialized successfully"));
 
   if (!SD.exists("/WiFi")) SD.mkdir("/WiFi");
   if (!SD.exists("/WiFi/Wardriving")) SD.mkdir("/WiFi/Wardriving");
@@ -168,12 +162,20 @@ void setup() {
 
   OLED_printLogo(display);
 
-  while (!buttonUp.isClick() && !buttonDown.isClick() && !buttonOK.isClick() && !buttonBack.isClick()) {
+  unsigned long logoStart = millis();
+  while (millis() - logoStart < 1500) {
     buttonUp.tick();
     buttonDown.tick();
     buttonOK.tick();
     buttonBack.tick();
+    if (buttonUp.isClick() || buttonDown.isClick() || buttonOK.isClick() || buttonBack.isClick()) {
+      break;
+    }
+    delay(10);
   }
+
+  display.clearDisplay();
+  display.display();
 
   OLED_printMenu(display, currentMenu);
   lastActivityTime = millis();
