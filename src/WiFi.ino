@@ -816,7 +816,15 @@ void handleWiFiSubmenu() {
     }
   }
 
-  if (buttonOK.isClick() && wifiMenuIndex == 2) {
+  if (inDeauthMenu) { handleDeauthSubmenu(); return; }
+  if (inWardriving) { handleWardriving(); return; }
+
+  bool upClick = buttonUp.isClick();
+  bool downClick = buttonDown.isClick();
+  bool okClick = buttonOK.isClick();
+  bool backClick = buttonBack.isClick();
+
+  if (okClick && wifiMenuIndex == 2) {
     inEvilPortal = true;
     inPortalExplorer = true;
     portalCurrentDir = "/WiFi/Portals";
@@ -827,9 +835,6 @@ void handleWiFiSubmenu() {
     return;
   }
 
-  if (inDeauthMenu) { handleDeauthSubmenu(); return; }
-  if (inWardriving) { handleWardriving(); return; }
-
   if (inSpamMenu) {
     if (!isSpamming) displaySpamPrompt();
     else displaySpamActive();
@@ -838,17 +843,17 @@ void handleWiFiSubmenu() {
   }
 
   if (!inSpamMenu && !inEvilPortal && !inDeauthMenu && !inWardriving) {
-    if (buttonUp.isClick()) {
+    if (upClick) {
       wifiMenuIndex = (wifiMenuIndex - 1 + WIFI_MENU_ITEM_COUNT) % WIFI_MENU_ITEM_COUNT;
       displayWiFiMenu(display, wifiMenuIndex);
     }
-    if (buttonDown.isClick()) {
+    if (downClick) {
       wifiMenuIndex = (wifiMenuIndex + 1) % WIFI_MENU_ITEM_COUNT;
       displayWiFiMenu(display, wifiMenuIndex);
     }
   }
 
-  if (buttonOK.isClick()) {
+  if (okClick) {
     if (wifiMenuIndex == 0) {
       inDeauthMenu = true;
       isScanning = true;
@@ -882,7 +887,7 @@ void handleWiFiSubmenu() {
     }
   }
 
-  if (buttonBack.isClick()) {
+  if (backClick) {
     if (inSpamMenu) {
       if (isSpamming) {
         isSpamming = false;
