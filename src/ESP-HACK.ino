@@ -187,20 +187,25 @@ void loop() {
   buttonOK.tick();
   buttonBack.tick();
 
-  bool upClick = buttonUp.isClick();
-  bool downClick = buttonDown.isClick();
-  bool okClick = buttonOK.isClick();
-  bool backClick = buttonBack.isClick();
-
-  bool anyClick = upClick || downClick || okClick || backClick;
-
-  if (anyClick && !inStandby) {
+  // Track any button press (not clicks) to keep the standby timer alive even in submenus
+  bool anyPress = buttonUp.isPress() || buttonDown.isPress() || buttonOK.isPress() || buttonBack.isPress();
+  if (anyPress && !inStandby) {
     resetActivityTimer();
   }
 
-  if (manageStandby(anyClick)) return;
+  if (manageStandby(anyPress)) return;
 
   if (inMenu) {
+    bool upClick = buttonUp.isClick();
+    bool downClick = buttonDown.isClick();
+    bool okClick = buttonOK.isClick();
+    bool backClick = buttonBack.isClick();
+
+    bool anyClick = upClick || downClick || okClick || backClick;
+    if (anyClick) {
+      resetActivityTimer();
+    }
+
     if (upClick) {
       currentMenu = (currentMenu - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
       OLED_printMenu(display, currentMenu);
@@ -230,10 +235,7 @@ void loop() {
       }
     }
   } else {
-    if (backClick) {
-      inMenu = true;
-      OLED_printMenu(display, currentMenu);
-    } else if (currentMenu == 0) {
+    if (currentMenu == 0) {
       handleWiFiSubmenu();
     } else if (currentMenu == 1) {
       handleBluetoothSubmenu();
