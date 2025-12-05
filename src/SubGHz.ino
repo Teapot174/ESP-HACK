@@ -5,18 +5,12 @@
 #include <SPI.h>
 #include <RCSwitch.h>
 
-void OLED_printCC1101InitFailed();
-
 // CC1101
 #define DEFAULT_RF_FREQUENCY 433.92 // MHz
 float frequency = DEFAULT_RF_FREQUENCY;
 const float frequencies[] = {315.0, 433.92, 868.0, 915.0};
-const int numFrequencies = 4;
+const int numFrequencies = sizeof(frequencies) / sizeof(frequencies[0]);
 int freqIndex = 1; // Default 433.92 MHz
-
-// SubGHz frequency list for analyzer
-const float subghz_frequency_list[] = {315.0, 433.92, 868.0, 915.0};
-const int subghz_frequency_count = sizeof(subghz_frequency_list) / sizeof(subghz_frequency_list[0]);
 int current_scan_index = 0;
 const int rssi_threshold = -85; // RSSI threshold
 
@@ -24,13 +18,7 @@ const int rssi_threshold = -85; // RSSI threshold
 RCSwitch rcswitch = RCSwitch();
 
 #define MAX_DATA_LOG 512
-#define RSSI_THRESHOLD -85
-#define MAX_TRIES 2
 
-volatile bool recieved = false;
-volatile int keyRawLog[MAX_DATA_LOG];
-volatile byte logLen;
-volatile bool sleepOn = false;
 byte menuIndex = 0;
 bool validKeyReceived = false;
 bool readRAW = true;
@@ -38,12 +26,9 @@ bool autoSave = false;
 int signals = 0;
 uint64_t lastSavedKey = 0;
 tpKeyData keyData1;
-float detected_frequency = 0.0;
 float last_detected_frequency = 0.0;
-bool display_updated = false;
 bool isJamming = false;
 unsigned long scanTimer = 0;
-bool returnToMenu = false;
 
 // File explorer state
 #define MAX_FILES 50
@@ -84,9 +69,8 @@ void OLED_printError(String st, bool err = true);
 bool saveKeyToSD(tpKeyData* kd);
 bool loadKeyFromSD(String fileName, tpKeyData* kd);
 void sendSynthKey(tpKeyData* kd);
-void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat);
+void stepFrequency(int step);
 void RCSwitch_RAW_send(int *ptrtransmittimings);
-void myDelayMcs(unsigned long dl);
 void OLED_printAnalyzer(bool signalReceived = false, float detectedFreq = 0.0);
 void OLED_printJammer();
 void OLED_printFileExplorer();
@@ -182,9 +166,7 @@ void runSubGHz() {
           setupCC1101();
           rcswitch.disableReceive();
           current_scan_index = 0;
-          detected_frequency = 0.0;
           last_detected_frequency = 0.0;
-          display_updated = false;
           scanTimer = millis();
           OLED_printAnalyzer();
         } else if (menuIndex == 3) {
@@ -201,15 +183,13 @@ void runSubGHz() {
       }
     } else if (menuState == menuReceive) {
       if (buttonUp.isClick()) {
-        freqIndex = (freqIndex + 1) % numFrequencies;
-        frequency = frequencies[freqIndex];
+        stepFrequency(1);
         keyData1.frequency = frequency;
         setupCC1101();
         OLED_printWaitingSignal();
       }
       if (buttonDown.isClick()) {
-        freqIndex = (freqIndex - 1 + numFrequencies) % numFrequencies;
-        frequency = frequencies[freqIndex];
+        stepFrequency(-1);
         keyData1.frequency = frequency;
         setupCC1101();
         OLED_printWaitingSignal();
@@ -360,30 +340,26 @@ void runSubGHz() {
         restoreReceiveMode();
         OLED_printSubGHzMenu(display, menuIndex);
       } else if (millis() - scanTimer >= 250) {
-        int rssi = ELECHOUSE_cc1101.getRssi();
-        if (rssi >= rssi_threshold) {
-          detected_frequency = subghz_frequency_list[current_scan_index];
-          if (detected_frequency != last_detected_frequency) {
-            last_detected_frequency = detected_frequency;
+        float detectedFrequency = 0.0;
+        if (ELECHOUSE_cc1101.getRssi() >= rssi_threshold) {
+          detectedFrequency = frequencies[current_scan_index];
+          if (detectedFrequency != last_detected_frequency) {
+            last_detected_frequency = detectedFrequency;
             Serial.print(F("Signal detected at "));
-            Serial.print(detected_frequency);
+            Serial.print(detectedFrequency);
             Serial.println(F(" MHz"));
             OLED_printAnalyzer(true, last_detected_frequency);
-            display_updated = true;
           }
-        } else {
-          detected_frequency = 0.0;
         }
-        current_scan_index = (current_scan_index + 1) % subghz_frequency_count;
-        ELECHOUSE_cc1101.setMHZ(subghz_frequency_list[current_scan_index]);
+        current_scan_index = (current_scan_index + 1) % numFrequencies;
+        ELECHOUSE_cc1101.setMHZ(frequencies[current_scan_index]);
         ELECHOUSE_cc1101.SetRx();
         delayMicroseconds(3500);
         scanTimer = millis();
       }
     } else if (menuState == menuJammer) {
       if (buttonUp.isClick()) {
-        freqIndex = (freqIndex + 1) % numFrequencies;
-        frequency = frequencies[freqIndex];
+        stepFrequency(1);
         if (isJamming) {
           stopJamming();
           startJamming();
@@ -391,8 +367,7 @@ void runSubGHz() {
         OLED_printJammer();
       }
       if (buttonDown.isClick()) {
-        freqIndex = (freqIndex - 1 + numFrequencies) % numFrequencies;
-        frequency = frequencies[freqIndex];
+        stepFrequency(-1);
         if (isJamming) {
           stopJamming();
           startJamming();
@@ -463,7 +438,6 @@ void restoreReceiveMode() {
   configureCC1101();
   rcswitch.disableReceive();
   rcswitch.enableReceive(CC1101_GDO0);
-  recieved = false;
 }
 
 void read_rcswitch(tpKeyData* kd) {
@@ -770,17 +744,12 @@ void OLED_printFileExplorer() {
   display.setTextWrap(false);
   display.setTextColor(SH110X_WHITE);
 
-  // Заголовок (текущая директория)
   display.setCursor(0, 0);
-  String dirName = currentDir;
-  if (dirName == "/") dirName = "/";
-  display.print(dirName);
+  display.print(currentDir);
 
-  // Разделитель
   display.setCursor(0, 12);
   display.println(F("---------------------"));
 
-  // Если пусто
   if (fileCount == 0) {
     display.setCursor(0, 24);
     display.println(F("No files."));
@@ -788,7 +757,6 @@ void OLED_printFileExplorer() {
     return;
   }
 
-  // Прокрутка «скользящим окном» (как в Bluetooth.ino)
   const int perPage = 4;
   int maxStart = (fileCount > perPage) ? (fileCount - perPage) : 0;
   int startIndex = fileIndex - 1; // чтобы активный элемент был не внизу
@@ -827,7 +795,6 @@ void OLED_printFileExplorer() {
 
 void sendSynthKey(tpKeyData* kd) {
   Serial.println(F("Starting transmission"));
-  recieved = true;
   OLED_printKey(kd, selectedFile, true);
   Serial.print(F("Transmitting key, protocol: "));
   Serial.print(getTypeName(kd->type));
@@ -914,16 +881,6 @@ void sendSynthKey(tpKeyData* kd) {
   OLED_printKey(kd, selectedFile);
 }
 
-void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat) {
-  RCSwitch mySwitch = RCSwitch();
-  mySwitch.enableTransmit(bruceConfig.rfModule == CC1101_SPI_MODULE ? bruceConfigPins.CC1101_bus.io0 : bruceConfig.rfTx);
-  mySwitch.setProtocol(protocol);
-  if (pulse) mySwitch.setPulseLength(pulse);
-  mySwitch.setRepeatTransmit(repeat);
-  mySwitch.send(data, bits);
-  mySwitch.disableTransmit();
-}
-
 void RCSwitch_RAW_send(int *ptrtransmittimings) {
   int nTransmitterPin = bruceConfig.rfModule == CC1101_SPI_MODULE ? bruceConfigPins.CC1101_bus.io0 : bruceConfig.rfTx;
   if (!ptrtransmittimings) return;
@@ -969,9 +926,9 @@ void RCSwitch_RAW_send(int *ptrtransmittimings) {
   free(arr);
 }
 
-void myDelayMcs(unsigned long dl) {
-  if (dl > 16000) delay(dl / 1000);
-  else delayMicroseconds(dl);
+void stepFrequency(int step) {
+  freqIndex = (freqIndex + step + numFrequencies) % numFrequencies;
+  frequency = frequencies[freqIndex];
 }
 
 void OLED_printAnalyzer(bool signalReceived, float detectedFreq) {
