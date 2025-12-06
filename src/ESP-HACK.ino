@@ -193,7 +193,7 @@ void loop() {
     resetActivityTimer();
   }
 
-  if (manageStandby(anyPress)) return;
+  if (inMenu && manageStandby(anyPress)) return;
 
   if (inMenu) {
     bool upClick = buttonUp.isClick();
