@@ -70,6 +70,7 @@ bool saveKeyToSD(tpKeyData* kd);
 bool loadKeyFromSD(String fileName, tpKeyData* kd);
 void sendSynthKey(tpKeyData* kd);
 void stepFrequency(int step);
+void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat);
 void RCSwitch_RAW_send(int *ptrtransmittimings);
 void OLED_printAnalyzer(bool signalReceived = false, float detectedFreq = 0.0);
 void OLED_printJammer();
@@ -796,6 +797,7 @@ void OLED_printFileExplorer() {
 void sendSynthKey(tpKeyData* kd) {
   Serial.println(F("Starting transmission"));
   OLED_printKey(kd, selectedFile, true);
+
   Serial.print(F("Transmitting key, protocol: "));
   Serial.print(getTypeName(kd->type));
   Serial.print(F(", ID: "));
@@ -807,123 +809,194 @@ void sendSynthKey(tpKeyData* kd) {
   Serial.print(F(", Freq: "));
   Serial.print(kd->frequency);
   Serial.println(F(" MHz"));
+
+  uint32_t frequency = kd->frequency * 1000000;
   String protocol = getTypeName(kd->type);
   String data = String(kd->rawData);
   uint64_t key = 0;
   for (int i = 0; i < 8; i++) {
     key |= ((uint64_t)kd->keyID[i] << ((7 - i) * 8));
   }
+  byte modulation = 2; // ASK/OOK
+  float rxBW = 270.0;
+  float deviation = 0;
+  float dataRate = 10;
+
+  int rcswitch_protocol_no = 1; // Default protocol
+
   if (!initRfModule("tx", kd->frequency)) {
+    Serial.println(F("Failed to initialize RF module"));
     OLED_printError(F("RF init failed"), true);
     delay(1000);
     OLED_printKey(kd, selectedFile);
     return;
   }
-  bool transmissionSuccess = false;
-  if (protocol == "RAW") {
-    int buff_size = 0, idx = 0;
-    while (idx >= 0) { idx = data.indexOf(' ', idx + 1); buff_size++; }
-    int *transmittimings = (int *)calloc(sizeof(int), buff_size + 1);
-    if (!transmittimings) {
-      OLED_printError(F("Memory error"), true);
+
+  if (bruceConfig.rfModule == CC1101_SPI_MODULE) {
+    ELECHOUSE_cc1101.setModulation(modulation);
+    ELECHOUSE_cc1101.setRxBW(rxBW);
+    ELECHOUSE_cc1101.setDeviation(deviation);
+    ELECHOUSE_cc1101.setDRate(dataRate);
+    pinMode(bruceConfigPins.CC1101_bus.io0, OUTPUT);
+    ELECHOUSE_cc1101.setPA(12);
+    ELECHOUSE_cc1101.SetTx();
+  } else {
+    if (modulation != 2) {
+      Serial.print("unsupported modulation: ");
+      Serial.println(modulation);
+      OLED_printError(F("Unsupported modulation"), true);
+      delay(1000);
+      OLED_printKey(kd, selectedFile);
       deinitRfModule();
       return;
     }
+    initRfModule("tx", kd->frequency);
+  }
+
+  bool transmissionSuccess = false;
+
+  if (protocol == "RAW") {
+    int buff_size = 0;
+    int index = 0;
+    while (index >= 0) {
+      index = data.indexOf(' ', index + 1);
+      buff_size++;
+    }
+    int *transmittimings = (int *)calloc(sizeof(int), buff_size + 1);
+    if (!transmittimings) {
+      Serial.println(F("Memory allocation failed"));
+      OLED_printError(F("Memory error"), true);
+      delay(1000);
+      OLED_printKey(kd, selectedFile);
+      deinitRfModule();
+      return;
+    }
+
     int startIndex = 0;
-    for (size_t i = 0; i < (size_t)buff_size; i++) {
-      idx = data.indexOf(' ', startIndex);
-      transmittimings[i] = (idx == -1) ? data.substring(startIndex).toInt() : data.substring(startIndex, idx).toInt();
-      if (idx == -1) break;
-      startIndex = idx + 1;
+    index = 0;
+    for (size_t i = 0; i < buff_size; i++) {
+      index = data.indexOf(' ', startIndex);
+      if (index == -1) {
+        transmittimings[i] = data.substring(startIndex).toInt();
+      } else {
+        transmittimings[i] = data.substring(startIndex, index).toInt();
+      }
+      startIndex = index + 1;
     }
     transmittimings[buff_size] = 0;
+
     display.setCursor(67, 54);
     display.print("Sending...");
     display.display();
     RCSwitch_RAW_send(transmittimings);
     free(transmittimings);
     transmissionSuccess = true;
-  } else if (protocol == "RcSwitch" || protocol == "Princeton") {
-    RCSwitch mySwitch;
-    mySwitch.enableTransmit(bruceConfig.rfModule == CC1101_SPI_MODULE ? bruceConfigPins.CC1101_bus.io0 : bruceConfig.rfTx);
-    int bits = kd->bitLength > 0 ? kd->bitLength : 24;
-    int pulse = kd->te > 0 ? kd->te : 350;
-    int repeat = 2;
-    int protocol_no = (protocol == "Princeton") ? 1 : (pulse >= 450 && pulse <= 650) ? 2 : (pulse >= 200 && pulse <= 300) ? 11 : 1;
-    if (protocol == "Princeton" && kd->te <= 0) pulse = 350;
-    mySwitch.setProtocol(protocol_no);
-    mySwitch.setPulseLength(pulse);
-    mySwitch.setRepeatTransmit(repeat);
-    mySwitch.send(key, (uint8_t)bits);
-    mySwitch.disableTransmit();
+  } else if (protocol == "RcSwitch") {
+    data.replace(" ", "");
+    uint64_t data_val = key;
+    int bits = kd->bitLength;
+    int pulse = kd->te;
+    int repeat = 10;
+    display.setCursor(67, 54);
+    display.print("Sending...");
+    display.display();
+    RCSwitch_send(data_val, bits, pulse, rcswitch_protocol_no, repeat);
+    transmissionSuccess = true;
+  } else if (protocol == "Princeton") {
+    RCSwitch_send(key, kd->bitLength, 350, 1, 10);
     transmissionSuccess = true;
   } else {
-    RCSwitch mySwitch;
-    mySwitch.enableTransmit(bruceConfig.rfModule == CC1101_SPI_MODULE ? bruceConfigPins.CC1101_bus.io0 : bruceConfig.rfTx);
-    mySwitch.setProtocol(11);
-    mySwitch.setPulseLength(270);
-    mySwitch.setRepeatTransmit(2);
-    int bits = kd->bitLength > 0 ? kd->bitLength : 24;
-    mySwitch.send(key, (uint8_t)bits);
-    mySwitch.disableTransmit();
+    Serial.print("unsupported protocol: ");
+    Serial.println(protocol);
+    Serial.println("Sending RcSwitch 11 protocol");
+    RCSwitch_send(key, kd->bitLength, 270, 11, 10);
     transmissionSuccess = true;
   }
+
   deinitRfModule();
+
   display.clearDisplay();
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
   display.setCursor(15, 47);
-  display.print(transmissionSuccess ? "Successfully!" : "Failed!");
+  if (transmissionSuccess) {
+    display.print("Successfully!");
+    Serial.println(F("Transmission completed successfully"));
+  } else {
+    display.print("Failed!");
+    Serial.println(F("Transmission failed"));
+  }
   display.drawBitmap(15, 12, image_Connected_bits, 62, 31, SH110X_WHITE);
   display.display();
-  Serial.println(transmissionSuccess ? F("Transmission completed successfully") : F("Transmission failed"));
   delay(1000);
   OLED_printKey(kd, selectedFile);
 }
 
+void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat) {
+  RCSwitch mySwitch = RCSwitch();
+
+  int txPin = bruceConfig.rfTx;
+  if (bruceConfig.rfModule == CC1101_SPI_MODULE) {
+    txPin = bruceConfigPins.CC1101_bus.io0;
+  }
+  mySwitch.enableTransmit(txPin);
+
+  mySwitch.setProtocol(protocol);
+  if (pulse) { mySwitch.setPulseLength(pulse); }
+  int rep = repeat > 0 ? repeat : 6;
+  if (rep > 6) rep = 6; // keep under ~1s
+  mySwitch.setRepeatTransmit(rep);
+  mySwitch.send(data, bits);
+
+  mySwitch.disableTransmit();
+}
+
 void RCSwitch_RAW_send(int *ptrtransmittimings) {
-  int nTransmitterPin = bruceConfig.rfModule == CC1101_SPI_MODULE ? bruceConfigPins.CC1101_bus.io0 : bruceConfig.rfTx;
+  int nTransmitterPin = bruceConfig.rfTx;
+  if (bruceConfig.rfModule == CC1101_SPI_MODULE) {
+    nTransmitterPin = bruceConfigPins.CC1101_bus.io0;
+  }
+
   if (!ptrtransmittimings) return;
-  int n = 0;
-  while (ptrtransmittimings[n] != 0) n++;
-  if (n <= 0) return;
-  int32_t* arr = (int32_t*)malloc(sizeof(int32_t) * n);
-  if (!arr) return;
-  bool anyNeg = false;
-  for (int i = 0; i < n; ++i) {
-    long v = ptrtransmittimings[i];
-    if (v < 0) anyNeg = true;
-    arr[i] = (int32_t)v;
+
+  // Determine if timings include negatives
+  bool hasNeg = false;
+  unsigned long sum_us = 0;
+  for (int i = 0; ptrtransmittimings[i]; ++i) {
+    if (ptrtransmittimings[i] < 0) hasNeg = true;
+    int v = ptrtransmittimings[i] >= 0 ? ptrtransmittimings[i] : -ptrtransmittimings[i];
+    sum_us += (unsigned long)v;
   }
-  pinMode(nTransmitterPin, OUTPUT);
-  for (int i = 0; i < 12; ++i) {
-    digitalWrite(nTransmitterPin, (i & 1) ? HIGH : LOW);
-    delayMicroseconds(200);
+  int nRepeatTransmit = 1;
+  if (sum_us > 0) {
+    nRepeatTransmit = (int)(900000UL / sum_us);
+    if (nRepeatTransmit < 1) nRepeatTransmit = 1;
+    if (nRepeatTransmit > 6) nRepeatTransmit = 6;
   }
-  digitalWrite(nTransmitterPin, LOW);
-  delayMicroseconds(300);
-  uint64_t sum = 0;
-  for (int i = 0; i < n; ++i) {
-    sum += (uint32_t)(arr[i] >= 0 ? arr[i] : -arr[i]);
-  }
-  int repeats = sum > 0 ? min(max((int)(350000UL / sum), 1), 3) : 1;
-  const uint32_t interframe_us = 2500;
-  for (int r = 0; r < repeats; ++r) {
-    digitalWrite(nTransmitterPin, LOW);
-    delayMicroseconds(150);
-    bool level = true;
-    for (int i = 0; i < n; ++i) {
-      int32_t d = arr[i];
-      uint32_t t = (uint32_t)(d >= 0 ? d : -d);
-      if (t == 0) t = 1;
-      digitalWrite(nTransmitterPin, anyNeg ? (d >= 0 ? HIGH : LOW) : (level ? HIGH : LOW));
+
+  for (int nRepeat = 0; nRepeat < nRepeatTransmit; nRepeat++) {
+    unsigned int currenttiming = 0;
+    bool level = true; // used for unsigned case
+    while (ptrtransmittimings[currenttiming]) {
+      int dur = ptrtransmittimings[currenttiming];
+      bool lvl;
+      unsigned int t;
+      if (hasNeg) {
+        lvl = (dur >= 0);
+        t = (unsigned int)(dur >= 0 ? dur : -dur);
+      } else {
+        // alternate HIGH/LOW starting with HIGH
+        lvl = level;
+        t = (unsigned int)(dur >= 0 ? dur : -dur);
+        level = !level;
+      }
+      digitalWrite(nTransmitterPin, lvl ? HIGH : LOW);
       delayMicroseconds(t);
-      if (!anyNeg) level = !level;
+      currenttiming++;
     }
     digitalWrite(nTransmitterPin, LOW);
-    delayMicroseconds(interframe_us);
+    delayMicroseconds(8000); // interframe gap
   }
-  free(arr);
 }
 
 void stepFrequency(int step) {
