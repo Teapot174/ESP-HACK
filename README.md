@@ -4,7 +4,7 @@
 
 ## 🚀 About ESP-HACK FW
 
-ESP-HACK is a powerful universal firmware for the ESP32, built for RF research and pentesting of radio frequencies, Bluetooth, infrared devices and GPIO integrations.  
+ESP-HACK is a powerful universal firmware for the ESP32, built for RF research and pentesting of radio frequencies, Bluetooth, infrared signals and GPIO integrations.  
 The project targets enthusiasts and pentesters who want to explore protocols and devices in Sub-GHz ranges and other wireless technologies.
 
 > *The firmware is stable within its declared functionality, but some features are marked as "in development". Use the device according to the laws in your region.*
