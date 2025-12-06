@@ -311,7 +311,7 @@ void OLED_printLogo(Adafruit_SH1106G &display) {
   display.setTextColor(1);
   display.setTextWrap(false);
   display.setCursor(2, 2);
-  display.print("v0.2");
+  display.print("v0.3");
   display.display();
 }
 
