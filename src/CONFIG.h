@@ -28,7 +28,7 @@
 #define CC1101_MISO 19
 
 // Infrared
-#define IR_TRANSMITTER 35
+#define IR_TRANSMITTER 12
 #define IR_RECIVER 14
 
 // GPIO
