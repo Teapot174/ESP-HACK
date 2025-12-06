@@ -1026,8 +1026,8 @@ void OLED_printJammer() {
   display.drawBitmap(0, 3, image_Dolphin_Send_bits, 97, 61, SH110X_WHITE);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(78, 12);
-  display.print(String(frequency, 2));
+  display.setCursor(72, 13);
+  display.print(String(frequency, 2) + "MHz");
   display.setCursor(65, 42);
   display.print(isJamming ? "Jamming..." : "Press OK");
   if (!isJamming) {

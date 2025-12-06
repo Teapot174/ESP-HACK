@@ -26,9 +26,9 @@ struct NRF24Config {
 } nrf24Config;
 
 // Available pins
-const byte availablePins[] = {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F, GPIO_G};
-const char* pinNames[] = {"A", "B", "C", "D", "E", "F", "G"};
-const byte AVAILABLE_PINS_COUNT = 7;
+const byte availablePins[] = {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
+const char* pinNames[] = {"A", "B", "C", "D", "E", "F"};
+const byte AVAILABLE_PINS_COUNT = 6;
 
 // Channel arrays for jamming
 byte wifi_channels[] = {6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 22, 24, 26, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 48, 50, 52, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68};
