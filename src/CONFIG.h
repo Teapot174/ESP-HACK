@@ -21,7 +21,7 @@
 #define SD_MISO 0
 
 // CC1101
-#define CC1101_GDO0 34
+#define CC1101_GDO0 4
 #define CC1101_CS 5
 #define CC1101_SCK 18
 #define CC1101_MOSI 23
