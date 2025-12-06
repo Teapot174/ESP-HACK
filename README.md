@@ -36,7 +36,7 @@ IOS, Android, Windows
 ### SubGHz
 
 - SubRead  
-- ~~SubSend~~ *(problems with IDE)*  
+- SubSend
 - Analyzer  
 - Jammer (ILLIGAL)
 
@@ -48,7 +48,7 @@ IOS, Android, Windows
 
 ### GPIO
 
-- ~~iButton (without module)~~ *(in development)*  
+- ~~iButton~~ *(in development)*  
 - NRF24: Jammer (ILLIGAL), Config
 - ~~Serial~~ *(in development)*
 
