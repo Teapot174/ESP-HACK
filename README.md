@@ -58,9 +58,11 @@ IOS, Android, Windows
 (315MHz/433.92MHz/868Mhz/915Mhz)
 - Princeton  
 - RcSwitch  
-- Came  
-- Holtec  
-- Nice  
+- Came
+- Nice 
+- Holtec
+- Ansonic
+- Chamberlain
 - StarLine  
 - KeeLoq
 
