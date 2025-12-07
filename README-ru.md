@@ -37,7 +37,9 @@ IOS, Android, Windows
 
 - SubRead  
 - SubSend
-- Analyzer  
+- Analyzer
+- Bruteforce:
+Came, Nice, Ansonic, Holtek, Chamberlain
 - Jammer (ILLEGAL)
 
 ### Infrared
@@ -51,6 +53,11 @@ IOS, Android, Windows
 - ~~iButton~~ *(в разработке)*
 - NRF24: Jammer (ILLIGAL), Config
 - ~~Serial~~ *(в разработке)*
+
+### Settings
+- Цвет дисплея
+- Время режима ожидания
+- О прошивке
 
 ---
 
