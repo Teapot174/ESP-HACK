@@ -55,7 +55,7 @@ IOS, Android, Windows
 ---
 
 ### 📡 Поддерживаемые модуляции SubGHz
-
+(315MHz/433.92MHz/868Mhz/915Mhz)
 - Princeton
 - RcSwitch  
 - Came  
