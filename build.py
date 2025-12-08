@@ -9,7 +9,7 @@ def merge_binaries(source, target, env):
     # Get project directory and name
     project_dir = Path(env["PROJECT_DIR"])
     project_name = "ESP-HACK"
-    merged_bin = project_dir / f"{project_name}.bin"
+    merged_bin = project_dir / f"esp-hack_build.bin"
 
     # Paths to source files
     build_dir = Path(env.subst("$BUILD_DIR"))
