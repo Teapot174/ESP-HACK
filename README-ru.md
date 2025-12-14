@@ -89,7 +89,7 @@ Thanks Dripside!
 | ESP32-WROOM | [TAP](https://aliexpress.ru/item/1005007817121199.html) |
 | CC1101 | [TAP](https://aliexpress.ru/item/1005008544032996.html) |
 | Display SH1106 | [TAP](https://aliexpress.ru/item/1005004464878029.html) |
-| SD-Модуль | [TAP](https://aliexpress.ru/item/32674518514.html) |
+| SD Модуль | [TAP](https://aliexpress.ru/item/32674518514.html) |
 | Кнопки | [TAP](https://aliexpress.ru/item/4000452176168.html) |
 | IR-TX, IR-RX | [TAP](https://aliexpress.ru/item/1005007446501425.html) |
 
