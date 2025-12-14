@@ -99,12 +99,12 @@ Thanks Dripside!
 
 | Module | Pin | Pin | Pin | Pin | Pin | Pin | Pin |
 |--------|-------|-------|-------|-------|-------|-------|-------|
-| **📺 Display** | VCC → 3V3 | GND → GND | SCL → G22 | SDA → G21 | - | - | - |
-| **🔘 Buttons** | UP (K1) → G27 | DOWN (K2) → G26 | OK (K3) → G33 | BACK (K4) → G32 | - | - | - |
+| **📺 Дисплей** | VCC → 3V3 | GND → GND | SCL → G22 | SDA → G21 | - | - | - |
+| **🔘 Кнопки** | UP → G27 | DOWN → G26 | OK → G33 | BACK → G32 | - | - | - |
 | **📡 CC1101** | 1 → GND | 2 → 3V3 | 3 → G4 | 4 → G5 | 5 → G18 | 6 → G23 | 7 → G19 |
-| **💡 IR** | IR-T → G12 | IR-R → G14 | - | - | - | - | - |
+| **💡 ИК** | IR-T → G12 | IR-R → G14 | - | - | - | - | - |
 | **🔌 GPIO** | A → G35 | B → G25 | C → G17 | D → G16 | E → G13 | F → G12 | - |
-| **💾 SD-Card** | 3v3 → 3v3 | GND → GND | MOSI → G15 | CLK → G2 | MISO → G0 | CS → GND | - |
+| **💾 SD Card** | 3v3 → 3v3 | GND → GND | MOSI → G15 | CLK → G2 | MISO → G0 | CS → GND | - |
 
 ---
 
