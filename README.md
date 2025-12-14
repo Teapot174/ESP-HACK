@@ -89,7 +89,7 @@ Thanks Dripside!
 | ESP32-WROOM | [TAP](https://aliexpress.ru/item/1005007817121199.html) |
 | CC1101 | [TAP](https://aliexpress.ru/item/1005008544032996.html) |
 | Display SH1106 | [TAP](https://aliexpress.ru/item/1005004464878029.html) |
-| SD-Мodule | [TAP](https://aliexpress.ru/item/32674518514.html) |
+| SD Мodule | [TAP](https://aliexpress.ru/item/32674518514.html) |
 | Buttons | [TAP](https://aliexpress.ru/item/4000452176168.html) |
 | IR-TX, IR-RX | [TAP](https://aliexpress.ru/item/1005007446501425.html) |
 
@@ -104,7 +104,7 @@ Thanks Dripside!
 | **📡 CC1101** | 1 → GND | 2 → 3V3 | 3 → G4 | 4 → G5 | 5 → G18 | 6 → G23 | 7 → G19 |
 | **💡 IR** | IR-T → G12 | IR-R → G14 | - | - | - | - | - |
 | **🔌 GPIO** | A → G35 | B → G25 | C → G17 | D → G16 | E → G13 | F → G12 | - |
-| **💾 SD-Card** | 3v3 → 3v3 | GND → GND | MOSI → G15 | CLK → G2 | MISO → G0 | CS → GND | - |
+| **💾 SD Card** | 3v3 → 3v3 | GND → GND | MOSI → G15 | CLK → G2 | MISO → G0 | CS → GND | - |
 
 ---
 
