@@ -107,13 +107,27 @@ void loadNRF24Config() {
 
 void displayNRF24Menu() {
   display.clearDisplay();
+  auto centerText = [](const char* text, int textSize) {
+    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
+  };
+
+  byte next = (nrf24MenuIndex + 1) % NRF24_MENU_ITEM_COUNT;
+  byte prev = (nrf24MenuIndex + NRF24_MENU_ITEM_COUNT - 1) % NRF24_MENU_ITEM_COUNT;
+
   display.setTextSize(2);
-  display.setCursor(1, 8);
-  for (byte i = 0; i < NRF24_MENU_ITEM_COUNT; i++) {
-    display.println(i == nrf24MenuIndex ? F("> ") : F("  "));
-    display.setCursor(20, display.getCursorY() - 16);
-    display.println(nrf24MenuItems[i]);
-  }
+  display.setCursor(centerText(nrf24MenuItems[nrf24MenuIndex], 2), 25);
+  display.print(nrf24MenuItems[nrf24MenuIndex]);
+
+  display.setTextSize(1);
+  display.setCursor(centerText(nrf24MenuItems[next], 1), 50);
+  display.print(nrf24MenuItems[next]);
+  display.setCursor(centerText(nrf24MenuItems[prev], 1), 7);
+  display.print(nrf24MenuItems[prev]);
+
+  display.setCursor(2, 30);
+  display.print(">");
+  display.setCursor(120, 30);
+  display.print("<");
   display.display();
 }
 

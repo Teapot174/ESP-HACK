@@ -22,6 +22,9 @@ bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
 bool inWardriving = false, isWardriving = false;
 int foundNetworks = 0;
 String ssidList[10];
+const byte BEACON_LOG_LINES = 5;
+String beaconLog[BEACON_LOG_LINES];
+byte beaconLogSize = 0;
 uint8_t bssidList[10][6];
 int deauthMenuIndex = 0;
 File wardrivingFile;
@@ -274,13 +277,47 @@ void displaySpamPrompt() {
   display.display();
 }
 
+void clearBeaconLog() {
+  beaconLogSize = 0;
+  for (byte i = 0; i < BEACON_LOG_LINES; i++) beaconLog[i] = "";
+}
+
+void appendBeaconLine(const String &line) {
+  if (beaconLogSize < BEACON_LOG_LINES) {
+    beaconLog[beaconLogSize++] = line;
+  } else {
+    for (byte i = 1; i < BEACON_LOG_LINES; i++) {
+      beaconLog[i - 1] = beaconLog[i];
+    }
+    beaconLog[BEACON_LOG_LINES - 1] = line;
+  }
+}
+
+void pushBeaconLog(const String &ssid) {
+  if (ssid.length() == 0) {
+    appendBeaconLine("");
+    return;
+  }
+  for (int start = 0; start < ssid.length(); start += 20) {
+    int end = start + 20;
+    if (end > ssid.length()) end = ssid.length();
+    appendBeaconLine(ssid.substring(start, end));
+  }
+}
+
 void displaySpamActive() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
   display.setCursor(1, 1);
   display.println(F("WiFi-Spam..."));
   display.println(F("====================="));
+  int16_t startY = display.getCursorY();
+  for (byte i = 0; i < beaconLogSize; i++) {
+    display.setCursor(1, startY + i * 9);
+    display.println(beaconLog[i]);
+  }
   display.display();
 }
 
@@ -396,6 +433,13 @@ void beaconSpamList(const char list[]) {
     } while (tmp != '\n' && j <= 32 && i + j < ssidsLen);
 
     uint8_t ssidLen = j - 1;
+    char ssidBuf[33];
+    for (uint8_t idx = 0; idx < ssidLen && idx < 32; idx++) {
+      ssidBuf[idx] = pgm_read_byte(list + i + idx);
+    }
+    ssidBuf[ssidLen] = '\0';
+    pushBeaconLog(ssidBuf);
+    displaySpamActive();
     macAddr[5] = ssidNum++;
     memcpy(&beaconPacket[10], macAddr, 6);
     memcpy(&beaconPacket[16], macAddr, 6);
@@ -856,6 +900,7 @@ void handleWiFiSubmenu() {
       } else {
         isSpamming = !isSpamming;
         if (isSpamming) {
+          clearBeaconLog();
           init_deauth_wifi();
           displaySpamActive();
         } else {

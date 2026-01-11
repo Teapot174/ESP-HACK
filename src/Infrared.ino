@@ -737,7 +737,6 @@ void handleIRSubmenu() {
         display.clearDisplay();
         displayIRMenu(display, irMenuIndex);
         display.display();
-        delay(10);
       }
     }
   } else if (state == SENDING_IR) {
@@ -908,7 +907,6 @@ void handleIRSubmenu() {
         display.clearDisplay();
         OLED_printMenu(display, currentMenu);
         display.display();
-        delay(10);
       }
     }
     yield();
@@ -1007,7 +1005,6 @@ void handleIRSubmenu() {
       display.clearDisplay();
       displayIRMenu(display, irMenuIndex);
       display.display();
-      delay(10);
     }
     yield();
   } else {
@@ -1016,14 +1013,12 @@ void handleIRSubmenu() {
       display.clearDisplay();
       displayIRMenu(display, irMenuIndex);
       display.display();
-      delay(10);
     }
     static byte lastMenuIndex = 255;
     if (irMenuIndex != lastMenuIndex) {
       display.clearDisplay();
       displayIRMenu(display, irMenuIndex);
       display.display();
-      delay(10);
       lastMenuIndex = irMenuIndex;
     }
     if (buttonUp.isClick()) {
@@ -1065,7 +1060,6 @@ void handleIRSubmenu() {
           display.clearDisplay();
           displayIRMenu(display, irMenuIndex);
           display.display();
-          delay(10);
           break;
       }
     }
@@ -1077,7 +1071,6 @@ void handleIRSubmenu() {
       display.clearDisplay();
       OLED_printMenu(display, currentMenu);
       display.display();
-      delay(10);
     }
   }
 }

@@ -705,7 +705,6 @@ void handleBluetoothSubmenu() {
           display.clearDisplay();
           OLED_printMenu(display, currentMenu);
           display.display();
-          delay(10);
           Serial.println(F("[BadKB] Back to main menu from BadKB"));
         }
       }
@@ -746,7 +745,6 @@ void handleBluetoothSubmenu() {
         display.clearDisplay();
         OLED_printMenu(display, currentMenu);
         display.display();
-        delay(10);
       }
     } else if (bleSpamState == READY || bleSpamState == RUNNING) {
       static unsigned long lastSpamTime = 0;
@@ -781,7 +779,7 @@ void handleBluetoothSubmenu() {
       }
 
       if (bleSpamState == RUNNING) {
-        const unsigned long spamInterval = 100; // Spam-Interval
+        const unsigned long spamInterval = 100; // Spam Interval
 
         if (millis() - lastSpamTime >= spamInterval) {
           switch (currentSpamType) {

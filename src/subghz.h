@@ -15,7 +15,24 @@ extern GButton buttonDown;
 extern GButton buttonOK;
 extern GButton buttonBack;
 
-enum emKeys { kUnknown, kP12bt, k12bt, k24bt, k64bt, kKeeLoq, kANmotors64, kPrinceton, kRcSwitch, kStarLine, kCAME, kNICE, kHOLTEK };
+enum emKeys {
+  kUnknown,
+  kP12bt,
+  k12bt,
+  k24bt,
+  k64bt,
+  kKeeLoq,
+  kANmotors64,
+  kPrinceton,
+  kRcSwitch,
+  kStarLine,
+  kCAME,
+  kNICE,
+  kHOLTEK,
+  kANSONIC,
+  kCHAMBERLAIN,
+  kLINEAR
+};
 enum emMenuState { menuMain, menuReceive, menuTransmit, menuAnalyzer, menuJammer, menuBruteforce, menuBruteConfig, menuBruteRun };
 
 struct tpKeyData {
@@ -31,7 +48,7 @@ struct tpKeyData {
   emKeys type;
   float frequency;
   int te;
-  char rawData[16];
+  char rawData[96];
   int bitLength;
   char preset[8];
 };
