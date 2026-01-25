@@ -353,7 +353,7 @@ void runSubGHz() {
         }
       }
     } else if (menuState == menuTransmit && inFileExplorer && inDeleteConfirm) {
-      // Consume navigation clicks while delete confirm is shown.
+      
       if (buttonUp.isClick() || buttonDown.isClick()) {
       }
       if (buttonOK.isClick()) {
