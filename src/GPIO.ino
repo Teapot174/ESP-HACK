@@ -247,7 +247,7 @@ void displayNRF24Error() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(8, 20);
+  display.setCursor(11, 20);
   display.print("NRF24 init failed.");
   display.setCursor(29, 32);
   display.print("ERROR: 0x002");
