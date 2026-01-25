@@ -86,6 +86,8 @@ bool inDeleteConfirm = false;
 String selectedFile = "";
 String currentDir = "/SubGHz";
 bool SubFiles = false;
+int nextSignalIndex = 1;
+bool nextSignalIndexReady = false;
 
 #define CC1101_SPI_MODULE 1
 
@@ -211,6 +213,7 @@ void runSubGHz() {
           currentDir = "/SubGHz";
           loadFileList();
           OLED_printFileExplorer();
+          resetButtonStates();
         } else if (menuIndex == 2) {
           menuState = menuAnalyzer;
           inDeleteConfirm = false;
@@ -314,6 +317,7 @@ void runSubGHz() {
           inFileExplorer = false;
           inDeleteConfirm = false;
           selectedFile = fileList[fileIndex].name;
+          resetButtonStates();
           if (loadKeyFromSD(selectedFile, &keyData1)) {
             OLED_printKey(&keyData1, selectedFile);
           } else {
@@ -359,10 +363,18 @@ void runSubGHz() {
           display.display();
           Serial.print(F("File deleted: "));
           Serial.println(filePath);
+          for (int i = fileIndex; i < fileCount - 1; i++) {
+            fileList[i] = fileList[i + 1];
+          }
+          if (fileCount > 0) {
+            fileCount--;
+          }
+          if (fileIndex >= fileCount && fileCount > 0) {
+            fileIndex = fileCount - 1;
+          } else if (fileCount == 0) {
+            fileIndex = 0;
+          }
           delay(1000);
-          fileCount = 0;
-          fileIndex = 0;
-          loadFileList();
           inDeleteConfirm = false;
           OLED_printFileExplorer();
         } else {
@@ -386,6 +398,7 @@ void runSubGHz() {
       if (buttonBack.isClick()) {
         inFileExplorer = true;
         inDeleteConfirm = false;
+        resetButtonStates();
         OLED_printFileExplorer();
       }
     } else if (menuState == menuBruteforce) {
@@ -763,11 +776,50 @@ bool saveKeyToSD(tpKeyData* kd) {
   if (!kd || kd->codeLenth == 0 || kd->frequency == 0.0) {
     return false;
   }
-  int fileNum = 1;
+  if (!nextSignalIndexReady) {
+    int maxSignalIndex = 0;
+    File dir = SD.open(currentDir);
+    if (dir) {
+      while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) break;
+        if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
+          String entryName = entry.name();
+          int lastSlash = entryName.lastIndexOf('/');
+          if (lastSlash >= 0) entryName = entryName.substring(lastSlash + 1);
+          if (entryName.startsWith("Signal_") && entryName.endsWith(".sub")) {
+            String numStr = entryName.substring(7, entryName.length() - 4);
+            int num = numStr.toInt();
+            if (num > maxSignalIndex) maxSignalIndex = num;
+          }
+        }
+        entry.close();
+      }
+      dir.close();
+      nextSignalIndex = maxSignalIndex + 1;
+      if (nextSignalIndex < 1) nextSignalIndex = 1;
+      nextSignalIndexReady = true;
+    }
+  }
+  int fileNum = (nextSignalIndex > 0) ? nextSignalIndex : 1;
   String fileName;
-  do {
-    fileName = currentDir + "/Signal_" + String(fileNum++) + ".sub";
-  } while (SD.exists(fileName) && fileNum <= 999);
+  while (fileNum <= 999) {
+    fileName = currentDir + "/Signal_" + String(fileNum) + ".sub";
+    if (!SD.exists(fileName)) break;
+    fileNum++;
+  }
+  if (fileNum > 999) {
+    fileNum = 1;
+    while (fileNum <= 999) {
+      fileName = currentDir + "/Signal_" + String(fileNum) + ".sub";
+      if (!SD.exists(fileName)) break;
+      fileNum++;
+    }
+  }
+  if (fileNum > 999) {
+    Serial.println(F("No free Signal_*.sub slots"));
+    return false;
+  }
   File file = SD.open(fileName, FILE_WRITE);
   if (!file) {
     Serial.print(F("Failed to open file for writing: "));
@@ -794,6 +846,8 @@ bool saveKeyToSD(tpKeyData* kd) {
   file.close();
   Serial.print(F("Saved to "));
   Serial.println(fileName);
+  nextSignalIndex = fileNum + 1;
+  nextSignalIndexReady = true;
   return true;
 }
 
@@ -848,6 +902,7 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
 
 void loadFileList() {
   fileCount = 0;
+  nextSignalIndexReady = false;
   File dir = SD.open(currentDir);
   if (!dir) {
     Serial.print(F("Failed to open directory: "));
@@ -865,13 +920,16 @@ void loadFileList() {
     entry.close();
   }
   dir.rewindDirectory();
-  while (fileCount < MAX_FILES) {
+  while (true) {
     File entry = dir.openNextFile();
     if (!entry) break;
     if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
-      fileList[fileCount].name = entry.name();
-      fileList[fileCount].isDir = false;
-      fileCount++;
+      String entryName = entry.name();
+      if (fileCount < MAX_FILES) {
+        fileList[fileCount].name = entryName;
+        fileList[fileCount].isDir = false;
+        fileCount++;
+      }
     }
     entry.close();
   }
@@ -1100,6 +1158,13 @@ void sendSynthKey(tpKeyData* kd) {
 
   if (!initRfModule("tx", kd->frequency)) {
     Serial.println(F("Failed to initialize CC1101"));
+    display.setTextColor(1);
+    display.setTextWrap(false);
+    display.setCursor(8, 20);
+    display.print("CC1101 init failed.");
+    display.setCursor(29, 32);
+    display.print("ERROR: 0x001");
+    display.display();
     OLED_printError(F("CC1101 init Failed."), true);
     delay(1000);
     OLED_printKey(kd, selectedFile);
