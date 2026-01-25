@@ -50,9 +50,17 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 ### GPIO
 
-- ~~iButton~~ *(in development)*  
-- NRF24: Jammer (ILLIGAL), Config
-- ~~Serial~~ *(in development)*
+**iButton *(in development)***
+- Read
+- Write
+- Config
+
+**NRF24**
+- Jammer (ILLIGAL)
+- Spectrum
+- Config
+
+**Serial *(in development)***
 
 ### Settings
 - Display Color
