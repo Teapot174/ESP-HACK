@@ -20,6 +20,7 @@ bool inSpamMenu = false, isSpamming = false;
 bool inEvilPortal = false, apRunning = false;
 bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
 bool inWardriving = false, isWardriving = false;
+bool inPacketsMenu = false, isPacketScanning = false, isPacketViewing = false;
 int foundNetworks = 0;
 String ssidList[10];
 const byte BEACON_LOG_LINES = 5;
@@ -27,11 +28,21 @@ String beaconLog[BEACON_LOG_LINES];
 byte beaconLogSize = 0;
 uint8_t bssidList[10][6];
 int deauthMenuIndex = 0;
+int packetsMenuIndex = 0;
 File wardrivingFile;
 int wardrivingFileNumber = 1;
 unsigned long lastScanTime = 0;
 const unsigned long SCAN_INTERVAL = 500;
 wifi_ap_record_t apRecords[10];
+unsigned long packetsPrevTime = 0, packetsCurTime = 0;
+unsigned long packetsPkts = 0, packetsDeauths = 0;
+unsigned long packetsMaxVal = 0;
+double packetsMultiplicator = 1.0;
+bool packetsBssidSet = false;
+uint16_t packetsVals[64];
+char packetsSsid[33] = "";
+uint8_t packetsBssid[6];
+uint8_t packetsChannel = 1;
 
 #if defined(LANGUAGE_FR_FR) || defined(LANGUAGE_PT_BR)
 const uint8_t channels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
@@ -273,7 +284,7 @@ void displaySpamPrompt() {
   display.setTextColor(SH110X_WHITE);
   display.setCursor(1, 1);
   display.println(F("Press OK."));
-  display.println(F("====================="));
+  display.println(F("---------------------"));
   display.display();
 }
 
@@ -312,7 +323,7 @@ void displaySpamActive() {
   display.setTextWrap(false);
   display.setCursor(1, 1);
   display.println(F("WiFi-Spam..."));
-  display.println(F("====================="));
+  display.println(F("---------------------"));
   int16_t startY = display.getCursorY();
   for (byte i = 0; i < beaconLogSize; i++) {
     display.setCursor(1, startY + i * 9);
@@ -415,6 +426,123 @@ void nextChannel() {
       Serial.println(wifi_channel);
     }
   }
+}
+
+bool packetsExtractBssid(const uint8_t *payload, uint16_t len, uint8_t *outBssid) {
+  if (len < 24) return false;
+  uint8_t fc1 = payload[1];
+  bool toDS = fc1 & 0x01;
+  bool fromDS = fc1 & 0x02;
+
+  const uint8_t *addr1 = payload + 4;
+  const uint8_t *addr2 = payload + 10;
+  const uint8_t *addr3 = payload + 16;
+
+  if (!toDS && !fromDS) {
+    memcpy(outBssid, addr3, 6);
+    return true;
+  }
+  if (toDS && !fromDS) {
+    memcpy(outBssid, addr1, 6);
+    return true;
+  }
+  if (!toDS && fromDS) {
+    memcpy(outBssid, addr2, 6);
+    return true;
+  }
+  return false;
+}
+
+void packetsSniffer(void *buf, wifi_promiscuous_pkt_type_t type) {
+  const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+  const uint8_t *payload = pkt->payload;
+  uint16_t len = pkt->rx_ctrl.sig_len;
+
+  if (!packetsBssidSet) return;
+
+  uint8_t bssid[6];
+  if (!packetsExtractBssid(payload, len, bssid)) return;
+
+  if (memcmp(bssid, packetsBssid, 6) != 0) return;
+
+  packetsPkts++;
+  if (payload[0] == 0xC0 || payload[0] == 0xA0) {
+    packetsDeauths++;
+  }
+}
+
+void packetsResetGraph() {
+  for (int i = 0; i < 64; i++) packetsVals[i] = 0;
+  packetsPkts = 0;
+  packetsDeauths = 0;
+  packetsMultiplicator = 1.0;
+  packetsPrevTime = millis();
+}
+
+void packetsGetMultiplicator() {
+  packetsMaxVal = packetsVals[0];
+  for (int i = 1; i < 64; i++) {
+    if (packetsVals[i] > packetsMaxVal) packetsMaxVal = packetsVals[i];
+  }
+  if (packetsMaxVal < 1) packetsMaxVal = 1;
+  packetsMultiplicator = packetsMaxVal > 45 ? (double)45 / packetsMaxVal : 1;
+}
+
+void packetsStartSniffing(uint8_t channel) {
+  init_deauth_wifi();
+  esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(&packetsSniffer);
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(true);
+  packetsResetGraph();
+}
+
+void packetsStopSniffing() {
+  esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(NULL);
+  WiFi.mode(WIFI_OFF);
+  packetsBssidSet = false;
+}
+
+void displayPacketsGraph() {
+  packetsCurTime = millis();
+  if (packetsCurTime - packetsPrevTime < 135) return; // Packets Speed
+  packetsPrevTime = packetsCurTime;
+
+  for (int i = 0; i < 63; i++) {
+    packetsVals[i] = packetsVals[i + 1];
+  }
+  packetsVals[63] = packetsPkts;
+
+  packetsGetMultiplicator();
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(3, 3);
+
+  char displaySsid[21];
+  strncpy(displaySsid, packetsSsid, 20);
+  displaySsid[20] = '\0';
+  display.print(displaySsid);
+  display.setCursor(1, 10);
+  display.print(F("---------------------"));
+
+  for (int i = 0; i < 63; i++) {
+    int bar = packetsVals[i] * packetsMultiplicator; // Graph height
+    if (bar > 0) {
+      int x = i * 2;
+      int top = 63 - bar;
+      if (top < 0) top = 0;
+      display.drawLine(x, 63, x, top, SH110X_WHITE);
+      display.drawLine(x + 1, 63, x + 1, top, SH110X_WHITE);
+    }
+  }
+
+  display.display();
+
+  packetsDeauths = 0;
+  packetsPkts = 0;
 }
 
 void beaconSpamList(const char list[]) {
@@ -785,6 +913,110 @@ void handleDeauthSubmenu() {
   }
 }
 
+void handlePacketsMenu() {
+  buttonUp.tick();
+  buttonDown.tick();
+  buttonOK.tick();
+  buttonBack.tick();
+
+  if (isPacketScanning) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SH110X_WHITE);
+    display.setCursor(3, 3);
+    display.println(F("Scanning:"));
+    display.println(F("---------------------"));
+    display.println(F("..."));
+    display.display();
+
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    foundNetworks = WiFi.scanNetworks(false, true);
+    if (foundNetworks > 0) {
+      isPacketScanning = false;
+      packetsMenuIndex = 0;
+      for (int i = 0; i < min(foundNetworks, 10); i++) {
+        ssidList[i] = WiFi.SSID(i);
+        wifi_ap_record_t *record = (wifi_ap_record_t *)WiFi.getScanInfoByIndex(i);
+        if (record) {
+          memcpy(&apRecords[i], record, sizeof(wifi_ap_record_t));
+        }
+      }
+    } else {
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setTextColor(SH110X_WHITE);
+      display.setCursor(1, 1);
+      display.print(F("No networks found"));
+      display.display();
+      delay(2000);
+      isPacketScanning = false;
+      inPacketsMenu = false;
+      displayWiFiMenu(display, wifiMenuIndex);
+      Serial.println(F("No networks found"));
+      return;
+    }
+  }
+
+  if (isPacketViewing) {
+    displayPacketsGraph();
+    if (buttonOK.isClick()) {
+      packetsStopSniffing();
+      isPacketViewing = false;
+      isPacketScanning = true;
+      return;
+    }
+    if (buttonBack.isClick()) {
+      packetsStopSniffing();
+      isPacketViewing = false;
+      inPacketsMenu = false;
+      displayWiFiMenu(display, wifiMenuIndex);
+    }
+    return;
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(3, 3);
+  display.println(F("Networks:"));
+  display.println(F("---------------------"));
+
+  int startIndex = max(0, packetsMenuIndex - 4);
+  for (int i = startIndex; i < min(foundNetworks, startIndex + 5); i++) {
+    display.setCursor(i == packetsMenuIndex ? 3 : 4, display.getCursorY());
+    display.print(i == packetsMenuIndex ? F("> ") : F("  "));
+    display.println(ssidList[i].substring(0, 15));
+  }
+  display.display();
+
+  if (buttonUp.isClick()) {
+    packetsMenuIndex = max(0, packetsMenuIndex - 1);
+  }
+  if (buttonDown.isClick()) {
+    packetsMenuIndex = min(foundNetworks - 1, packetsMenuIndex + 1);
+  }
+
+  if (buttonOK.isClick()) {
+    packetsChannel = apRecords[packetsMenuIndex].primary;
+    memset(packetsSsid, 0, sizeof(packetsSsid));
+    strncpy(packetsSsid, ssidList[packetsMenuIndex].c_str(), sizeof(packetsSsid) - 1);
+    memcpy(packetsBssid, apRecords[packetsMenuIndex].bssid, 6);
+    packetsBssidSet = true;
+    WiFi.scanDelete();
+    packetsStartSniffing(packetsChannel);
+    isPacketViewing = true;
+  }
+
+  if (buttonBack.isClick()) {
+    isPacketScanning = false;
+    inPacketsMenu = false;
+    WiFi.scanDelete();
+    WiFi.mode(WIFI_OFF);
+    displayWiFiMenu(display, wifiMenuIndex);
+  }
+}
+
 void handleWiFiSubmenu() {
   memset(emptySSID, 0x20, 32);
   emptySSID[31] = '\0';
@@ -858,6 +1090,7 @@ void handleWiFiSubmenu() {
 
   if (inDeauthMenu) { handleDeauthSubmenu(); return; }
   if (inWardriving) { handleWardriving(); return; }
+  if (inPacketsMenu) { handlePacketsMenu(); return; }
 
   bool upClick = buttonUp.isClick();
   bool downClick = buttonDown.isClick();
@@ -925,6 +1158,14 @@ void handleWiFiSubmenu() {
     } else if (wifiMenuIndex == 3) {
       inWardriving = true;
       displayWardrivingPrompt();
+    } else if (wifiMenuIndex == 4) {
+      inPacketsMenu = true;
+      isPacketScanning = true;
+      isPacketViewing = false;
+      packetsBssidSet = false;
+      WiFi.mode(WIFI_STA);
+      WiFi.disconnect();
+      return;
     }
   }
 
