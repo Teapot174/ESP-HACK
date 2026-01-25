@@ -357,6 +357,7 @@ void displayDeauthActive(String ssid) {
   display.setCursor(3, 3);
   display.println(F("Deauth..."));
   display.println(F("---------------------"));
+  display.setCursor(4, display.getCursorY());
   display.println(ssid.substring(0, 15));
   display.display();
 }
@@ -379,6 +380,7 @@ void displayWardrivingActive() {
   display.println(F("Wardriving..."));
   display.println(F("---------------------"));
   if (foundNetworks > 0) {
+    display.setCursor(2, display.getCursorY());
     display.print(foundNetworks);
     display.print(F(". "));
     display.println(ssidList[0].substring(0, 15));
@@ -386,13 +388,16 @@ void displayWardrivingActive() {
     snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
              bssidList[0][0], bssidList[0][1], bssidList[0][2],
              bssidList[0][3], bssidList[0][4], bssidList[0][5]);
+    display.setCursor(2, display.getCursorY());
     display.print(F("MAC: "));
     display.println(bssidStr);
+    display.setCursor(2, display.getCursorY());
     display.print(F("Enc: "));
     display.println(apRecords[0].authmode == WIFI_AUTH_OPEN ? F("Open") : 
                    apRecords[0].authmode == WIFI_AUTH_WEP ? F("WEP") : 
                    apRecords[0].authmode == WIFI_AUTH_WPA_PSK ? F("WPA") : 
                    apRecords[0].authmode == WIFI_AUTH_WPA2_PSK ? F("WPA2") : F("Other"));
+    display.setCursor(2, display.getCursorY());
     display.print(F("RSSI: "));
     display.println(apRecords[0].rssi);
   }
@@ -735,6 +740,7 @@ void handleDeauthSubmenu() {
     buttonBack.tick();
     if (buttonBack.isClick()) {
       isDeauthing = false;
+      inDeauthMenu = false;
       WiFi.mode(WIFI_OFF);
       displayWiFiMenu(display, wifiMenuIndex);
     }
@@ -752,7 +758,7 @@ void handleDeauthSubmenu() {
 
   int startIndex = max(0, deauthMenuIndex - 4);
   for (int i = startIndex; i < min(foundNetworks, startIndex + 5); i++) {
-    display.setCursor(i == deauthMenuIndex ? 2 : 3, display.getCursorY());
+    display.setCursor(i == deauthMenuIndex ? 3 : 4, display.getCursorY());
     display.print(i == deauthMenuIndex ? F("> ") : F("  "));
     display.println(ssidList[i].substring(0, 15));
   }

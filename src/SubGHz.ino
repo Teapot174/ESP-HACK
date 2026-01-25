@@ -1188,18 +1188,6 @@ void sendSynthKey(tpKeyData* kd) {
 
   deinitRfModule();
 
-  display.clearDisplay();
-  display.setTextColor(SH110X_WHITE);
-  display.setTextWrap(false);
-  display.setCursor(15, 47);
-  if (transmissionSuccess) {
-    display.print("Successfully!");
-  } else {
-    display.print("Failed!");
-  }
-  display.drawBitmap(15, 12, image_Connected_bits, 62, 31, SH110X_WHITE);
-  display.display();
-  delay(1000);
   OLED_printKey(kd, selectedFile);
 }
 
