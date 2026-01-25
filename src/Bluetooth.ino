@@ -389,14 +389,15 @@ void drawBadKBExplorer(Adafruit_SH1106G &display) {
 
   const int perPage = 4;
   int maxStart = (badKBFileCount > perPage) ? (badKBFileCount - perPage) : 0;
-  int startIndex = badKBFileIndex;
+  int startIndex = badKBFileIndex - 1;
+  if (startIndex < 0) startIndex = 0;
   if (startIndex > maxStart) startIndex = maxStart;
   for (int i = 0; i < perPage; i++) {
     int idx = startIndex + i;
     if (idx >= badKBFileCount) break;
-    display.setCursor(1, 24 + i * 10);
+    display.setCursor(1, 22 + i * 10);
     if (idx == badKBFileIndex) {
-      display.fillRect(0, 24 + i * 10 - 1, display.width(), 10, SH110X_WHITE);
+      display.fillRect(0, 22 + i * 10 - 1, display.width(), 10, SH110X_WHITE);
       display.setTextColor(SH110X_BLACK);
     } else {
       display.setTextColor(SH110X_WHITE);
