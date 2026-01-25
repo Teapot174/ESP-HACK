@@ -455,7 +455,7 @@ void handleGPIOSubmenu() {
         display.clearDisplay();
         display.setTextSize(1);
         display.setCursor(1, 1);
-        display.println(F("iButton Selected"));
+        display.println(F("In development..."));
         display.display();
         break;
       case 1:
@@ -468,7 +468,7 @@ void handleGPIOSubmenu() {
         display.clearDisplay();
         display.setTextSize(1);
         display.setCursor(1, 1);
-        display.println(F("Serial Selected"));
+        display.println(F("In development..."));
         display.display();
         break;
     }
