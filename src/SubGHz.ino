@@ -330,6 +330,7 @@ void runSubGHz() {
       }
       if (buttonBack.isHolded() && fileCount > 0 && SubFiles) {
         inDeleteConfirm = true;
+        resetButtonStates();
         OLED_printDeleteConfirm();
       }
       if (buttonBack.isClick()) {
@@ -352,6 +353,9 @@ void runSubGHz() {
         }
       }
     } else if (menuState == menuTransmit && inFileExplorer && inDeleteConfirm) {
+      // Consume navigation clicks while delete confirm is shown.
+      if (buttonUp.isClick() || buttonDown.isClick()) {
+      }
       if (buttonOK.isClick()) {
         String filePath = currentDir + "/" + fileList[fileIndex].name;
         if (SD.remove(filePath)) {
