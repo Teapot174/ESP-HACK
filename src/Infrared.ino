@@ -43,6 +43,32 @@ bool inIRMenu = false;
 enum AppState { MENU, IR_SELECTION, SENDING_IR, IR_FILE_EXPLORER, IR_READING, IR_DELETE_CONFIRM, IR_SIGNAL_SUBMENU };
 AppState state = MENU;
 
+volatile bool irAbortRequested = false;
+void IRAM_ATTR onIrAbort() {
+  irAbortRequested = true;
+}
+bool irSuppressInput = false;
+unsigned long irSuppressStart = 0;
+
+void startInputSuppress() {
+  irSuppressInput = true;
+  irSuppressStart = millis();
+}
+
+bool handleInputSuppress() {
+  if (!irSuppressInput) return false;
+  if (digitalRead(BUTTON_OK) == LOW || digitalRead(BUTTON_BACK) == LOW) {
+    return true;
+  }
+  if (millis() - irSuppressStart < 60) {
+    return true;
+  }
+  irSuppressInput = false;
+  (void)buttonOK.isClick();
+  (void)buttonBack.isClick();
+  return true;
+}
+
 extern const IrCode* const NApowerCodes[];
 extern const IrCode* const EUpowerCodes[];
 extern uint8_t num_NAcodes, num_EUcodes;
@@ -125,6 +151,12 @@ unsigned long customSendLastTime = 0;
 void initIR() {
   irsend.begin();
   pinMode(IR_RECIVER, INPUT);
+  static bool abortIsrAttached = false;
+  if (!abortIsrAttached) {
+    attachInterrupt(digitalPinToInterrupt(BUTTON_OK), onIrAbort, RISING);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_BACK), onIrAbort, RISING);
+    abortIsrAttached = true;
+  }
 }
 
 String uint32ToString(uint32_t value) {
@@ -163,6 +195,10 @@ uint8_t tvbgReadBits(uint8_t count) {
 }
 
 bool sendNextTvbgCode() {
+  if (isAbortSendPressed()) {
+    startInputSuppress();
+    return false;
+  }
   while (true) {
     const IrCode* const* codes = (tvbg.region == TVBG_REGION_EU) ? EUpowerCodes : NApowerCodes;
     const uint8_t regionCount = (tvbg.region == TVBG_REGION_EU) ? num_EUcodes : num_NAcodes;
@@ -184,6 +220,10 @@ bool sendNextTvbgCode() {
     tvbg.bitsLeft = 0;
     tvbg.codePtr = 0;
     for (uint8_t k = 0; k < numpairs; k++) {
+      if (isAbortSendPressed()) {
+        startInputSuppress();
+        return false;
+      }
       const uint16_t ti = (tvbgReadBits(bitcompression)) * 2;
       const uint16_t ontime = tvbg.powerCode->times[ti];
       const uint16_t offtime = tvbg.powerCode->times[ti + 1];
@@ -192,6 +232,10 @@ bool sendNextTvbgCode() {
       yield();
     }
 
+    if (isAbortSendPressed()) {
+      startInputSuppress();
+      return false;
+    }
     irsend.sendRaw(tvbgRawData, (numpairs * 2), freq);
     tvbg.bitsLeft = 0;
     tvbg.totalSent++;
@@ -203,11 +247,25 @@ void startFixedAttack(const uint32_t* signals, int count, const __FlashStringHel
   fixedAttack = {};
   fixedAttack.signals = signals;
   fixedAttack.count = count;
+  irAbortRequested = false;
   drawSendingScreen(0);
   Serial.println(logMsg);
 }
 
+bool isAbortSendPressed() {
+  if (irAbortRequested) return true;
+  if (buttonOK.isClick() || buttonBack.isClick()) {
+    irAbortRequested = true;
+    return true;
+  }
+  return false;
+}
+
 bool handleFixedAttack(unsigned long currentMillis) {
+  if (isAbortSendPressed()) {
+    startInputSuppress();
+    return false;
+  }
   if (fixedAttack.signals == nullptr || fixedAttack.count == 0) {
     return false;
   }
@@ -264,7 +322,7 @@ void drawSendingScreen(int progress) {
     display.drawBitmap(14, 12, image_Power_hvr_bits, 38, 40, SH110X_WHITE);
     display.setTextSize(1);
     display.setCursor(62, 43);
-    display.print(irMenuIndex == 0 ? F(" Sending...") : F("IR-Attack."));
+    display.print(irMenuIndex == 0 ? F("Sending...") : F("IR-Attack."));
   }
   
   display.display();
@@ -668,10 +726,18 @@ void handleIRSubmenu() {
     buttonDown.setDebounce(50);
     buttonOK.setDebounce(50);
     buttonBack.setDebounce(50);
-    buttonUp.setTimeout(150);
-    buttonDown.setTimeout(150);
+    buttonUp.setTimeout(500);
+    buttonDown.setTimeout(500);
     buttonOK.setTimeout(500);
     buttonBack.setTimeout(500);
+    buttonUp.setClickTimeout(300);
+    buttonDown.setClickTimeout(300);
+    buttonOK.setClickTimeout(300);
+    buttonBack.setClickTimeout(300);
+    buttonUp.setStepTimeout(200);
+    buttonDown.setStepTimeout(200);
+    buttonOK.setStepTimeout(200);
+    buttonBack.setStepTimeout(200);
   }
 
   static bool irReceiverEnabled = false;
@@ -688,6 +754,10 @@ void handleIRSubmenu() {
   buttonOK.tick();
   buttonBack.tick();
 
+  if (handleInputSuppress()) {
+    return;
+  }
+
   if (irMenuIndex >= IR_MENU_ITEM_COUNT) {
     irMenuIndex = 0;
   }
@@ -699,6 +769,8 @@ void handleIRSubmenu() {
       lastMenuIndex = irMenuIndex;
       Serial.println(irMenuIndex);
     }
+    (void)buttonUp.isClick();
+    (void)buttonDown.isClick();
     if (buttonOK.isClick()) {
       if (irMenuIndex == 2 || irMenuIndex == 3 || irMenuIndex == 4) {
         switch (irMenuIndex) {
@@ -712,6 +784,7 @@ void handleIRSubmenu() {
             break;
           case 4: // TV-OFF
             state = SENDING_IR;
+            irAbortRequested = false;
             resetTvbgState();
             Serial.println(F("Starting TV-OFF attack"));
             drawSendingScreen(0);
@@ -719,6 +792,7 @@ void handleIRSubmenu() {
         }
       } else if (irMenuIndex == 0) {
         state = SENDING_IR;
+        irAbortRequested = false;
         customSendLastTime = 0;
         sendStartTime = millis();
         Serial.print(F("Starting IR-Send for signal: "));
@@ -742,6 +816,13 @@ void handleIRSubmenu() {
   } else if (state == SENDING_IR) {
     unsigned long currentMillis = millis();
     if (irMenuIndex == 4) {
+      if (isAbortSendPressed()) {
+        startInputSuppress();
+        state = IR_SELECTION;
+        resetTvbgState();
+        displayIRSelection(irMenuIndex);
+        return;
+      }
       if (tvbg.totalCount == 0) {
         resetTvbgState();
       }
@@ -769,28 +850,25 @@ void handleIRSubmenu() {
           return;
         }
       }
-      if (buttonOK.isClick() || buttonBack.isClick()) {
-        state = IR_SELECTION;
-        resetTvbgState();
-        displayIRSelection(irMenuIndex);
-      }
     } else if (irMenuIndex == 2 || irMenuIndex == 3) {
+      if (isAbortSendPressed()) {
+        startInputSuppress();
+        state = IR_SELECTION;
+        fixedAttack = {};
+        displayIRSelection(irMenuIndex);
+        return;
+      }
       if (!handleFixedAttack(currentMillis)) {
         state = IR_SELECTION;
         fixedAttack = {};
         displayIRSelection(irMenuIndex);
         return;
       }
-      if (buttonOK.isClick() || buttonBack.isClick()) {
-        state = IR_SELECTION;
-        fixedAttack = {};
-        displayIRSelection(irMenuIndex);
-      }
     } else if (irMenuIndex == 0) {
       if (buttonBack.isClick()) {
-        state = IR_SIGNAL_SUBMENU;
+        state = IR_SELECTION;
         display.clearDisplay();
-        drawSignalSubmenu();
+        displayIRSelection(irMenuIndex, irSelectedSignal);
         return;
       }
       if (buttonOK.isClick()) {
@@ -798,9 +876,9 @@ void handleIRSubmenu() {
         drawSendingScreen(0);
       }
       if (currentMillis - sendStartTime >= 2000) {
-        state = IR_SIGNAL_SUBMENU;
+        state = IR_SELECTION;
         display.clearDisplay();
-        drawSignalSubmenu();
+        displayIRSelection(irMenuIndex, irSelectedSignal);
         return;
       }
       if (currentMillis - customSendLastTime >= 15) {
@@ -811,9 +889,9 @@ void handleIRSubmenu() {
           drawSendingScreen(0);
         } else {
           Serial.println(F("Failed to send IR signal"));
-          state = IR_SIGNAL_SUBMENU;
+          state = IR_SELECTION;
           display.clearDisplay();
-          drawSignalSubmenu();
+          displayIRSelection(irMenuIndex, irSelectedSignal);
           return;
         }
       }
