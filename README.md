@@ -50,7 +50,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 ### GPIO
 
-**iButton *(in development)***
+**iButton**
 - Read
 - Write
 - Config
