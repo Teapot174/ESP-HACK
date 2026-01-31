@@ -9,6 +9,7 @@
 #include "CONFIG.h"
 #include "menu/infrared.h"
 #include "menu/subghz.h"
+#include "Explorer.h"
 
 struct IrCode {
   uint8_t timer_val;
@@ -117,17 +118,10 @@ struct FixedAttackState {
 FixedAttackState fixedAttack;
 
 #define MAX_FILES 50
-struct IRFileEntry {
-  String name;
-  bool isDir;
-};
-IRFileEntry irFileList[MAX_FILES];
-int irFileCount = 0;
-int irFileIndex = 0;
-bool irInFileExplorer = false;
-bool irInDeleteConfirm = false;
-String irSelectedFile = "";
-String irCurrentDir = "/Infrared";
+static const char* irExts[] = {".ir"};
+ExplorerEntry irFileList[MAX_FILES];
+ExplorerState irExplorer;
+ExplorerConfig irExplorerCfg = {"/Infrared", irExts, 1, true, false, true, true};
 
 #define MAX_SIGNALS 20
 String irSignalList[MAX_SIGNALS];
@@ -373,8 +367,8 @@ void drawReadingScreen() {
     display.print(F("Bits: "));
     display.print(results.bits);
 
-    display.setCursor(1, 51);
-    display.print(F("Hold OK to save"));
+    display.setCursor(17, 52);
+    display.print(F("Hold OK to save."));
   }
   
   display.display();
@@ -390,45 +384,12 @@ void drawSaveConfirm() {
   display.display();
 }
 
-void drawFileExplorer() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextWrap(false);
-  display.setTextColor(SH110X_WHITE);
-
-  display.setCursor(1, 1);
-  display.print(irCurrentDir);
-
-  display.setCursor(1, 12);
-  display.println(F("---------------------"));
-
-  if (irFileCount == 0) {
-    display.setCursor(1, 24);
-    display.println(F("No files."));
-    display.display();
-    return;
+static void ensureIrExplorerDir() {
+  if (irExplorer.currentDir.length() == 0) {
+    irExplorer.currentDir = irExplorerCfg.rootDir;
   }
-
-  const int perPage = 4;
-  int maxStart = (irFileCount > perPage) ? (irFileCount - perPage) : 0;
-  int startIndex = irFileIndex;
-  if (startIndex > maxStart) startIndex = maxStart;
-  for (int i = 0; i < perPage; i++) {
-    int idx = startIndex + i;
-    if (idx >= irFileCount) break;
-    display.setCursor(1, 24 + i * 10);
-    if (idx == irFileIndex) {
-      display.fillRect(0, 24 + i * 10 - 1, display.width(), 10, SH110X_WHITE);
-      display.setTextColor(SH110X_BLACK);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    String name = irFileList[idx].name;
-    if (irFileList[idx].isDir) name = "[" + name + "]";
-    display.print(name);
-  }
-  display.display();
 }
+
 
 void drawSignalSubmenu() {
   display.clearDisplay();
@@ -437,7 +398,7 @@ void drawSignalSubmenu() {
   display.setTextColor(SH110X_WHITE);
 
   display.setCursor(1, 1);
-  String name = irSelectedFile;
+  String name = irExplorer.selectedFile;
   if (name.length() > 16) name = name.substring(0, 16);
   display.print(F("File: "));
   display.print(name);
@@ -472,24 +433,11 @@ void drawSignalSubmenu() {
   display.display();
 }
 
-void drawDeleteConfirm() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SH110X_WHITE);
-  display.setTextWrap(false);
-  display.setCursor(1, 1);
-  String name = irFileList[irFileIndex].name;
-  if (name.length() > 16) name = name.substring(0, 16);
-  display.print(F("File: "));
-  display.print(name);
-  display.setCursor(1, 24);
-  display.print(F("Press OK to DELETE."));
-  display.display();
-}
 
 void loadIRSignals(String fileName) {
+  ensureIrExplorerDir();
   irSignalCount = 0;
-  File file = SD.open(irCurrentDir + "/" + fileName, FILE_READ);
+  File file = SD.open(irExplorer.currentDir + "/" + fileName, FILE_READ);
   if (!file) {
     Serial.print(F("Failed to open file for signals: "));
     Serial.println(fileName);
@@ -515,7 +463,8 @@ void loadIRSignals(String fileName) {
 }
 
 bool sendIRSignal(String fileName, int signalIdx) {
-  File file = SD.open(irCurrentDir + "/" + fileName, FILE_READ);
+  ensureIrExplorerDir();
+  File file = SD.open(irExplorer.currentDir + "/" + fileName, FILE_READ);
   if (!file) {
     Serial.print(F("Failed to open file: "));
     Serial.println(fileName);
@@ -604,41 +553,6 @@ bool sendIRSignal(String fileName, int signalIdx) {
   return false;
 }
 
-void loadIRFileList() {
-  irFileCount = 0;
-  File dir = SD.open(irCurrentDir);
-  if (!dir) {
-    Serial.print(F("Failed to open directory: "));
-    Serial.println(irCurrentDir);
-    return;
-  }
-  while (irFileCount < MAX_FILES) {
-    File entry = dir.openNextFile();
-    if (!entry) break;
-    if (entry.isDirectory()) {
-      irFileList[irFileCount].name = entry.name();
-      irFileList[irFileCount].isDir = true;
-      irFileCount++;
-    }
-    entry.close();
-  }
-  dir.rewindDirectory();
-  while (irFileCount < MAX_FILES) {
-    File entry = dir.openNextFile();
-    if (!entry) break;
-    if (!entry.isDirectory() && String(entry.name()).endsWith(".ir")) {
-      irFileList[irFileCount].name = entry.name();
-      irFileList[irFileCount].isDir = false;
-      irFileCount++;
-    }
-    entry.close();
-  }
-  dir.close();
-  Serial.print(F("Found "));
-  Serial.print(irFileCount);
-  Serial.println(F(" entries"));
-}
-
 String parseRawSignal() {
   rawcode = resultToRawArray(&results);
   raw_data_len = getCorrectedRawLength(&results);
@@ -686,19 +600,20 @@ void appendToDeviceContent(String btn_name) {
 }
 
 bool saveIRSignal() {
+  ensureIrExplorerDir();
   String filename = "Infrared";
   int index = 1;
-  File dir = SD.open(irCurrentDir);
+  File dir = SD.open(irExplorer.currentDir);
   if (!dir) {
     Serial.println(F("Failed to open /Infrared directory"));
     return false;
   }
   dir.close();
-  SD.mkdir(irCurrentDir);
-  while (SD.exists(irCurrentDir + "/" + filename + "_" + String(index) + ".ir")) {
+  SD.mkdir(irExplorer.currentDir);
+  while (SD.exists(irExplorer.currentDir + "/" + filename + "_" + String(index) + ".ir")) {
     index++;
   }
-  filename = irCurrentDir + "/" + filename + "_" + String(index) + ".ir";
+  filename = irExplorer.currentDir + "/" + filename + "_" + String(index) + ".ir";
   File file = SD.open(filename, FILE_WRITE);
   if (!file) {
     Serial.print(F("Failed to create file: "));
@@ -883,7 +798,7 @@ void handleIRSubmenu() {
       }
       if (currentMillis - customSendLastTime >= 15) {
         customSendLastTime = currentMillis;
-        if (sendIRSignal(irSelectedFile, irSignalIndex)) {
+        if (sendIRSignal(irExplorer.selectedFile, irSignalIndex)) {
           Serial.print(F("IR signal sent: "));
           Serial.println(irSelectedSignal);
           drawSendingScreen(0);
@@ -917,116 +832,42 @@ void handleIRSubmenu() {
     }
     if (buttonBack.isClick()) {
       state = IR_FILE_EXPLORER;
-      irInFileExplorer = true;
       irSignalCount = 0;
       irSignalIndex = 0;
       irSelectedSignal = "";
       display.clearDisplay();
-      drawFileExplorer();
+      ExplorerDraw(irExplorer, display);
     }
     yield();
-  } else if (state == IR_FILE_EXPLORER && irInFileExplorer && !irInDeleteConfirm) {
-    static int lastFileIndex = -1;
-    if (irFileIndex != lastFileIndex) {
-      drawFileExplorer();
-      lastFileIndex = irFileIndex;
-    }
-    if (buttonUp.isClick()) {
-      irFileIndex = (irFileIndex == 0) ? (irFileCount - 1) : irFileIndex - 1;
-    }
-    if (buttonDown.isClick()) {
-      irFileIndex = (irFileIndex == irFileCount - 1) ? 0 : irFileIndex + 1;
-    }
-    if (buttonOK.isClick() && irFileCount > 0) {
-      if (irFileList[irFileIndex].isDir) {
-        irCurrentDir += "/" + irFileList[irFileIndex].name;
-        irFileIndex = 0;
-        irFileCount = 0;
-        loadIRFileList();
-        display.clearDisplay();
-        drawFileExplorer();
-      } else {
-        irInFileExplorer = false;
-        irInDeleteConfirm = false;
-        irSelectedFile = irFileList[irFileIndex].name;
-        irSignalIndex = 0;
-        irSignalCount = 0;
-        loadIRSignals(irSelectedFile);
-        state = IR_SIGNAL_SUBMENU;
-        display.clearDisplay();
-        drawSignalSubmenu();
-        Serial.print(F("Selected IR file: "));
-        Serial.println(irSelectedFile);
-      }
-    }
-    if (buttonBack.isHold()) {
-      irInDeleteConfirm = true;
+  } else if (state == IR_FILE_EXPLORER) {
+    ExplorerAction action = ExplorerHandle(
+      irExplorer,
+      irExplorerCfg,
+      display,
+      buttonUp.isClick(),
+      buttonDown.isClick(),
+      buttonOK.isClick(),
+      buttonBack.isClick(),
+      buttonBack.isHold()
+    );
+    if (action == EXPLORER_SELECT_FILE) {
+      irSignalIndex = 0;
+      irSignalCount = 0;
+      loadIRSignals(irExplorer.selectedFile);
+      state = IR_SIGNAL_SUBMENU;
       display.clearDisplay();
-      drawDeleteConfirm();
-    }
-    if (buttonBack.isClick()) {
-      if (irCurrentDir != "/Infrared") {
-        int lastSlash = irCurrentDir.lastIndexOf('/');
-        irCurrentDir = irCurrentDir.substring(0, lastSlash);
-        if (irCurrentDir == "") irCurrentDir = "/Infrared";
-        irFileIndex = 0;
-        irFileCount = 0;
-        loadIRFileList();
-        display.clearDisplay();
-        drawFileExplorer();
-      } else {
-        inIRMenu = false;
-        state = MENU;
-        inMenu = true;
-        currentMenu = 3;
-        irInFileExplorer = false;
-        irInDeleteConfirm = false;
-        irSelectedFile = "";
-        display.clearDisplay();
-        OLED_printMenu(display, currentMenu);
-        display.display();
-      }
-    }
-    yield();
-  } else if (state == IR_FILE_EXPLORER && irInFileExplorer && irInDeleteConfirm) {
-    if (buttonOK.isClick()) {
-      String filePath = irCurrentDir + "/" + irFileList[irFileIndex].name;
-      if (SD.remove(filePath)) {
-        display.clearDisplay();
-        display.drawBitmap(5, 2, image_DolphinMafia_bits, 119, 62, SH110X_WHITE);
-        display.setTextColor(SH110X_WHITE);
-        display.setTextWrap(false);
-        display.setCursor(84, 15);
-        display.print(F("Deleted"));
-        display.display();
-        Serial.print(F("File deleted: "));
-        Serial.println(filePath);
-        delay(1000);
-        irFileCount = 0;
-        irFileIndex = 0;
-        loadIRFileList();
-        irInDeleteConfirm = false;
-        display.clearDisplay();
-        drawFileExplorer();
-      } else {
-        display.clearDisplay();
-        display.setTextColor(SH110X_WHITE);
-        display.setTextWrap(false);
-        display.setCursor(1, 1);
-        display.print(F("Failed to delete"));
-        display.display();
-        Serial.print(F("Failed to delete file: "));
-        Serial.println(filePath);
-        delay(1000);
-        irInDeleteConfirm = false;
-        display.clearDisplay();
-        drawFileExplorer();
-      }
-    }
-    if (buttonBack.isClick()) {
-      irInDeleteConfirm = false;
+      drawSignalSubmenu();
+      Serial.print(F("Selected IR file: "));
+      Serial.println(irExplorer.selectedFile);
+    } else if (action == EXPLORER_EXIT) {
+      inIRMenu = false;
+      state = MENU;
+      inMenu = true;
+      currentMenu = 3;
+      irExplorer.selectedFile = "";
       display.clearDisplay();
-      drawFileExplorer();
+      OLED_printMenu(display, currentMenu);
+      display.display();
     }
   } else if (state == IR_READING) {
     static int lastSignalRead = -1;
@@ -1109,13 +950,10 @@ void handleIRSubmenu() {
       switch (irMenuIndex) {
         case 0: // IR-Send
           state = IR_FILE_EXPLORER;
-          irInFileExplorer = true;
-          irFileIndex = 0;
-          irFileCount = 0;
-          irCurrentDir = "/Infrared";
-          loadIRFileList();
+          ExplorerInit(irExplorer, irFileList, MAX_FILES, irExplorerCfg);
+          ExplorerLoad(irExplorer, irExplorerCfg);
           display.clearDisplay();
-          drawFileExplorer();
+          ExplorerDraw(irExplorer, display);
           break;
         case 1: // IR-Read
           state = IR_READING;

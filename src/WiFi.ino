@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <SD.h>
+#include "Explorer.h"
 #include "CONFIG.h"
 #include "menu/wifi.h"
 #include "deauth.h"
@@ -159,109 +160,30 @@ uint8_t beaconPacket[109] = {
 };
 
 #define MAX_PORTAL_FILES 50
-struct PortalFileEntry {
-  String name;
-  bool isDir;
-};
-PortalFileEntry portalFileList[MAX_PORTAL_FILES];
-int portalFileCount = 0;
-int portalFileIndex = 0;
+static const char* portalExts[] = {".html", ".htm"};
+ExplorerEntry portalFileList[MAX_PORTAL_FILES];
+ExplorerState portalExplorer;
+ExplorerConfig portalExplorerCfg = {"/WiFi/Portals", portalExts, 2, true, true, true, true};
 bool inPortalExplorer = false;
-String portalCurrentDir = "/WiFi/Portals";
 String getCurrentPortalHtml = "";
 
 void loadPortalFileList() {
-  portalFileCount = 0;
-  if (!SD.exists(portalCurrentDir)) {
-    SD.mkdir(portalCurrentDir);
+  if (!SD.exists(portalExplorerCfg.rootDir)) {
+    SD.mkdir(portalExplorerCfg.rootDir);
   }
-
   createDefaultPortal();
-
-  File dir = SD.open(portalCurrentDir);
-  if (!dir) return;
-
-  while (portalFileCount < MAX_PORTAL_FILES) {
-    File entry = dir.openNextFile();
-    if (!entry) break;
-    if (entry.isDirectory()) {
-      String name = entry.name();
-      name = name.substring(name.lastIndexOf('/') + 1);
-      portalFileList[portalFileCount] = {name, true};
-      portalFileCount++;
-    }
-    entry.close();
+  if (portalExplorer.currentDir.length() == 0) {
+    portalExplorer.currentDir = portalExplorerCfg.rootDir;
   }
-
-  dir.rewindDirectory();
-  while (portalFileCount < MAX_PORTAL_FILES) {
-    File entry = dir.openNextFile();
-    if (!entry) break;
-    if (!entry.isDirectory()) {
-      String name = entry.name();
-      name = name.substring(name.lastIndexOf('/') + 1);
-      if (name.endsWith(".html") || name.endsWith(".htm")) {
-        portalFileList[portalFileCount] = {name, false};
-        portalFileCount++;
-      }
-    }
-    entry.close();
-  }
-  dir.close();
+  ExplorerLoad(portalExplorer, portalExplorerCfg);
 }
 
 void drawPortalExplorer() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextWrap(false);
-  display.setTextColor(SH110X_WHITE);
-
-  display.setCursor(1, 1);
-  display.print(portalCurrentDir);
-
-  display.setCursor(1, 12);
-  display.println(F("---------------------"));
-
-  if (portalFileCount == 0) {
-    display.setCursor(1, 24);
-    display.println(F("No files."));
-    display.display();
-    return;
-  }
-
-  const int perPage = 4;
-  int maxStart = (portalFileCount > perPage) ? (portalFileCount - perPage) : 0;
-  int startIndex = portalFileIndex - 1;
-  if (startIndex < 0) startIndex = 0;
-  if (startIndex > maxStart) startIndex = maxStart;
-
-  int itemsToShow = portalFileCount - startIndex;
-  if (itemsToShow > perPage) itemsToShow = perPage;
-
-  const int baseRow = 2;
-
-  for (int i = 0; i < itemsToShow; i++) {
-    int idx = startIndex + i;
-    String name = portalFileList[idx].name;
-    if (name.length() > 18) name = name.substring(0, 18);
-
-    int y = (i + baseRow) * 11;
-
-    if (idx == portalFileIndex) {
-      display.fillRect(0, y - 1, 128, 11, SH110X_WHITE);
-      display.setTextColor(SH110X_BLACK);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.setCursor(1, y);
-    display.println(name);
-  }
-
-  display.display();
+  ExplorerDraw(portalExplorer, display);
 }
 
 bool loadSelectedPortal() {
-  String fullPath = portalCurrentDir + "/" + portalFileList[portalFileIndex].name;
+  String fullPath = portalExplorer.currentDir + "/" + portalExplorer.selectedFile;
   File file = SD.open(fullPath, FILE_READ);
   if (!file) {
     return false;
@@ -1028,51 +950,34 @@ void handleWiFiSubmenu() {
 
   if (inEvilPortal) {
     if (inPortalExplorer) {
-      drawPortalExplorer();
-
-      if (buttonUp.isClick()) {
-        portalFileIndex = (portalFileIndex == 0) ? (portalFileCount - 1) : portalFileIndex - 1;
-      }
-      if (buttonDown.isClick()) {
-        portalFileIndex = (portalFileIndex == portalFileCount - 1) ? 0 : portalFileIndex + 1;
-      }
-
-      if (buttonOK.isClick() && portalFileCount > 0) {
-        if (portalFileList[portalFileIndex].isDir) {
-          portalCurrentDir += "/" + portalFileList[portalFileIndex].name;
-          portalFileIndex = 0;
-          portalFileCount = 0;
-          loadPortalFileList();
-          drawPortalExplorer();
-        } else {
-          if (loadSelectedPortal()) {
-            inPortalExplorer = false;
-            startEvilPortal();
-          } else {
-            display.clearDisplay();
-            display.setCursor(1, 20);
-            display.println(F("Load failed!"));
-            display.display();
-            delay(1500);
-          }
-        }
-      }
-
-      if (buttonBack.isClick()) {
-        if (portalCurrentDir != "/WiFi/Portals") {
-          int last = portalCurrentDir.lastIndexOf('/');
-          portalCurrentDir = portalCurrentDir.substring(0, last);
-          portalFileIndex = 0;
-          portalFileCount = 0;
-          loadPortalFileList();
-          drawPortalExplorer();
-        } else {
-          inEvilPortal = false;
+      ExplorerAction action = ExplorerHandle(
+        portalExplorer,
+        portalExplorerCfg,
+        display,
+        buttonUp.isClick(),
+        buttonDown.isClick(),
+        buttonOK.isClick(),
+        buttonBack.isClick(),
+        buttonBack.isHolded()
+      );
+      if (action == EXPLORER_SELECT_FILE) {
+        if (loadSelectedPortal()) {
           inPortalExplorer = false;
-          inMenu = true;
-          currentMenu = 0;
-          OLED_printMenu(display, currentMenu);
+          startEvilPortal();
+        } else {
+          display.clearDisplay();
+          display.setCursor(1, 20);
+          display.println(F("Load failed!"));
+          display.display();
+          delay(1500);
+          ExplorerDraw(portalExplorer, display);
         }
+      } else if (action == EXPLORER_EXIT) {
+        inEvilPortal = false;
+        inPortalExplorer = false;
+        inMenu = true;
+        currentMenu = 0;
+        OLED_printMenu(display, currentMenu);
       }
       return;
     } else {
@@ -1100,9 +1005,7 @@ void handleWiFiSubmenu() {
   if (okClick && wifiMenuIndex == 2) {
     inEvilPortal = true;
     inPortalExplorer = true;
-    portalCurrentDir = "/WiFi/Portals";
-    portalFileIndex = 0;
-    portalFileCount = 0;
+    ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
     loadPortalFileList();
     drawPortalExplorer();
     return;
@@ -1150,9 +1053,7 @@ void handleWiFiSubmenu() {
     } else if (wifiMenuIndex == 2) {
       inEvilPortal = true;
       inPortalExplorer = true;
-      portalCurrentDir = "/WiFi/Portals";
-      portalFileIndex = 0;
-      portalFileCount = 0;
+      ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
       loadPortalFileList();
       drawPortalExplorer();
     } else if (wifiMenuIndex == 3) {

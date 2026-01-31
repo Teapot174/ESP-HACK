@@ -5,6 +5,7 @@
 #include "ble_spam.h"
 #include "menu/subghz.h"
 #include <SD.h>
+#include "Explorer.h"
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
@@ -297,129 +298,20 @@ static void stopBLE() {
 }
 
 #define MAX_FILES 50
-struct BadKBFileEntry {
-  String name;
-  bool isDir;
-};
-BadKBFileEntry badKBFileList[MAX_FILES];
-int badKBFileCount = 0;
-int badKBFileIndex = 0;
-String badKBCurrentDir = "/BadKB";
+static const char* badKbExts[] = {".txt"};
+ExplorerEntry badKBFileList[MAX_FILES];
+ExplorerState badKBExplorer;
+ExplorerConfig badKBExplorerCfg = {"/BadKB", badKbExts, 1, true, false, true, true};
 
 static void loadBadKBFileList() {
-  badKBFileCount = 0;
-  File root = SD.open(badKBCurrentDir);
-  if (!root) {
-    Serial.println(F("Failed to open directory"));
-    return;
+  if (badKBExplorer.currentDir.length() == 0) {
+    badKBExplorer.currentDir = badKBExplorerCfg.rootDir;
   }
-  if (!root.isDirectory()) {
-    Serial.println(F("Not a directory"));
-    root.close();
-    return;
-  }
-
-  int dirCount = 0, fileCount = 0;
-  File file = root.openNextFile();
-  while (file) {
-    String fname = String(file.name());
-    if (fname[0] != '.') {
-      if (file.isDirectory()) dirCount++;
-      else if (fname.endsWith(".txt")) fileCount++;
-    }
-    file.close();
-    file = root.openNextFile();
-  }
-
-  root.rewindDirectory();
-  file = root.openNextFile();
-  std::vector<String> dirs;
-  while (file) {
-    String fname = String(file.name());
-    if (file.isDirectory() && fname[0] != '.') {
-      dirs.push_back(fname);
-    }
-    file.close();
-    file = root.openNextFile();
-  }
-  std::sort(dirs.begin(), dirs.end());
-  for (auto& d : dirs) {
-    badKBFileList[badKBFileCount].name = d;
-    badKBFileList[badKBFileCount].isDir = true;
-    badKBFileCount++;
-  }
-
-  root.rewindDirectory();
-  file = root.openNextFile();
-  std::vector<String> files;
-  while (file) {
-    String fname = String(file.name());
-    if (!file.isDirectory() && fname[0] != '.' && fname.endsWith(".txt")) {
-      files.push_back(fname);
-    }
-    file.close();
-    file = root.openNextFile();
-  }
-  std::sort(files.begin(), files.end());
-  for (auto& f : files) {
-    badKBFileList[badKBFileCount].name = f;
-    badKBFileList[badKBFileCount].isDir = false;
-    badKBFileCount++;
-  }
-
-  root.close();
+  ExplorerLoad(badKBExplorer, badKBExplorerCfg);
 }
 
 void drawBadKBExplorer(Adafruit_SH1106G &display) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextWrap(false);
-  display.setTextColor(SH110X_WHITE);
-  display.setCursor(1, 1);
-  display.print(badKBCurrentDir);
-  display.setCursor(1, 12);
-  display.println(F("---------------------"));
-
-  if (badKBFileCount == 0) {
-    display.setCursor(1, 24);
-    display.println(F("No files."));
-    display.display();
-    return;
-  }
-
-  const int perPage = 4;
-  int maxStart = (badKBFileCount > perPage) ? (badKBFileCount - perPage) : 0;
-  int startIndex = badKBFileIndex - 1;
-  if (startIndex < 0) startIndex = 0;
-  if (startIndex > maxStart) startIndex = maxStart;
-  for (int i = 0; i < perPage; i++) {
-    int idx = startIndex + i;
-    if (idx >= badKBFileCount) break;
-    display.setCursor(1, 22 + i * 10);
-    if (idx == badKBFileIndex) {
-      display.fillRect(0, 22 + i * 10 - 1, display.width(), 10, SH110X_WHITE);
-      display.setTextColor(SH110X_BLACK);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    String name = badKBFileList[idx].name;
-    if (badKBFileList[idx].isDir) name = "[" + name + "]";
-    display.print(name);
-  }
-  display.display();
-}
-
-void drawDeleteConfirm(Adafruit_SH1106G &display, const String& filename) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SH110X_WHITE);
-  display.setTextWrap(false);
-  display.setCursor(1, 1);
-  display.print(F("File: "));
-  display.print(filename);
-  display.setCursor(1, 24);
-  display.print(F("Press OK to DELETE."));
-  display.display();
+  ExplorerDraw(badKBExplorer, display);
 }
 
 void displayBadKBScriptExec(Adafruit_SH1106G &display, const String& filename, const std::vector<String>& logs, int logTop) {
@@ -499,50 +391,9 @@ void handleBluetoothSubmenu() {
   static bool scriptDone = false;
   static String selectedFile = "";
   static bool waitingForConnection = false;
-  static bool deleteConfirm = false;
-  static String deleteFile = "";
   static bool justEnteredBadBLE = false;
 
   if (inBadBLE) {
-    if (deleteConfirm) {
-      drawDeleteConfirm(display, deleteFile);
-      if (buttonOK.isClick()) {
-        String fullPath = badKBCurrentDir + "/" + deleteFile;
-        bool success;
-        if (badKBFileList[badKBFileIndex].isDir) {
-          success = SD.rmdir(fullPath);
-        } else {
-          success = SD.remove(fullPath);
-        }
-        display.clearDisplay();
-        display.setTextColor(SH110X_WHITE);
-        display.setTextWrap(false);
-        if (success) {
-          display.drawBitmap(5, 2, image_DolphinMafia_bits, 119, 62, SH110X_WHITE);
-          display.setCursor(84, 15);
-          display.print(F("Deleted"));
-          display.display();
-          Serial.printf("[BadKB] File deleted: %s\n", fullPath.c_str());
-        } else {
-          display.setCursor(1, 1);
-          display.print(F("Failed to delete"));
-          display.display();
-          Serial.printf("[BadKB] Failed to delete file: %s\n", fullPath.c_str());
-        }
-        delay(1000);
-        deleteConfirm = false;
-        explorerLoaded = false;
-        badKBFileCount = 0;
-        badKBFileIndex = 0;
-        loadBadKBFileList();
-        drawBadKBExplorer(display);
-      }
-      if (buttonBack.isClick()) {
-        deleteConfirm = false;
-        drawBadKBExplorer(display);
-      }
-      return;
-    }
     if (scriptSelected) {
       if (scriptRunning) {
         ensureBleHidInited();
@@ -590,11 +441,12 @@ void handleBluetoothSubmenu() {
       }
     } else {
       if (!explorerLoaded) {
+        ExplorerInit(badKBExplorer, badKBFileList, MAX_FILES, badKBExplorerCfg);
         loadBadKBFileList();
         explorerLoaded = true;
         justEnteredBadBLE = false;
+        drawBadKBExplorer(display);
       }
-      drawBadKBExplorer(display);
     }
   } else {
     if (bleSpamState == IDLE) {
@@ -618,8 +470,7 @@ void handleBluetoothSubmenu() {
   }
 
   if (inBadBLE) {
-    if (deleteConfirm) {
-    } else if (scriptSelected) {
+    if (scriptSelected) {
       if (buttonUp.isClick() && execLogTop > 0) {
         execLogTop--;
         displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
@@ -638,7 +489,9 @@ void handleBluetoothSubmenu() {
         if (gAdv && gAdv->isAdvertising()) {
           gAdv->stop();
         }
-        explorerLoaded = false;
+        ExplorerInit(badKBExplorer, badKBFileList, MAX_FILES, badKBExplorerCfg);
+        loadBadKBFileList();
+        explorerLoaded = true;
         drawBadKBExplorer(display);
       }
       if (buttonOK.isClick() && scriptDone) {
@@ -647,68 +500,42 @@ void handleBluetoothSubmenu() {
         waitingForConnection = false;
       }
     } else {
-      if (buttonUp.isClick()) {
-        if (badKBFileIndex > 0) {
-          badKBFileIndex--;
-          drawBadKBExplorer(display);
-        }
-        Serial.println(F("[BadKB] menu Up"));
+      bool backClick = buttonBack.isClick();
+      if (justEnteredBadBLE) backClick = false;
+      ExplorerAction action = ExplorerHandle(
+        badKBExplorer,
+        badKBExplorerCfg,
+        display,
+        buttonUp.isClick(),
+        buttonDown.isClick(),
+        buttonOK.isClick(),
+        backClick,
+        buttonBack.isHold()
+      );
+      if (action == EXPLORER_SELECT_FILE) {
+        selectedFile = badKBExplorer.currentDir + "/" + badKBExplorer.selectedFile;
+        scriptSelected = true;
+        scriptRunning = true;
+        scriptDone = false;
+        waitingForConnection = false;
+        execLogs.clear();
+        execLogTop = 0;
+        ensureBleHidInited();
+        displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
+        Serial.println(F("[BadKB] Selected BadKB script"));
+      } else if (action == EXPLORER_EXIT) {
+        inBadBLE = false;
+        explorerLoaded = false;
+        justEnteredBadBLE = false;
+        stopBLE();
+        inMenu = true;
+        bluetoothMenuIndex = 0;
+        display.clearDisplay();
+        OLED_printMenu(display, currentMenu);
+        display.display();
+        Serial.println(F("[BadKB] Back to main menu from BadKB"));
       }
-      if (buttonDown.isClick()) {
-        if (badKBFileIndex < badKBFileCount - 1) {
-          badKBFileIndex++;
-          drawBadKBExplorer(display);
-        }
-        Serial.println(F("[BadKB] menu Down"));
-      }
-      if (buttonOK.isClick()) {
-        if (badKBFileCount == 0) return;
-        String selName = badKBFileList[badKBFileIndex].name;
-        if (badKBFileList[badKBFileIndex].isDir) {
-          badKBCurrentDir += "/" + selName;
-          badKBFileIndex = 0;
-          explorerLoaded = false;
-          drawBadKBExplorer(display);
-          Serial.println(F("[BadKB] Entered BadKB directory"));
-        } else if (selName.endsWith(".txt")) {
-          selectedFile = badKBCurrentDir + "/" + selName;
-          scriptSelected = true;
-          scriptRunning = true;
-          scriptDone = false;
-          waitingForConnection = false;
-          execLogs.clear();
-          execLogTop = 0;
-          ensureBleHidInited();
-          displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
-          Serial.println(F("[BadKB] Selected BadKB script"));
-        }
-      }
-      if (buttonBack.isHold()) {
-        if (badKBFileCount == 0) return;
-        deleteFile = badKBFileList[badKBFileIndex].name;
-        deleteConfirm = true;
-        drawDeleteConfirm(display, deleteFile);
-      }
-      if (buttonBack.isClick() && !justEnteredBadBLE) {
-        if (badKBCurrentDir != "/BadKB") {
-          int lastSlash = badKBCurrentDir.lastIndexOf('/');
-          badKBCurrentDir = badKBCurrentDir.substring(0, lastSlash);
-          badKBFileIndex = 0;
-          explorerLoaded = false;
-          drawBadKBExplorer(display);
-        } else {
-          inBadBLE = false;
-          explorerLoaded = false;
-          justEnteredBadBLE = false;
-          stopBLE();
-          inMenu = true;
-          bluetoothMenuIndex = 0;
-          display.clearDisplay();
-          OLED_printMenu(display, currentMenu);
-          display.display();
-          Serial.println(F("[BadKB] Back to main menu from BadKB"));
-        }
-      }
+      if (justEnteredBadBLE) justEnteredBadBLE = false;
     }
   } else {
     if (bleSpamState == IDLE) {
@@ -723,8 +550,6 @@ void handleBluetoothSubmenu() {
       if (buttonOK.isClick()) {
         if (bluetoothMenuIndex == 3) {
           inBadBLE = true;
-          badKBCurrentDir = "/BadKB";
-          badKBFileIndex = 0;
           explorerLoaded = false;
           justEnteredBadBLE = true;
           ensureBleHidInited();

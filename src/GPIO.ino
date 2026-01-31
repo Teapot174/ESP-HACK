@@ -1,10 +1,13 @@
 #include "menu/gpio.h"
+#include "menu/subghz.h"
+#include "Explorer.h"
 #include "CONFIG.h"
 #include <Adafruit_SH110X.h>
 #include <GyverButton.h>
 #include <SPI.h>
 #include <RF24.h>
 #include <SD.h>
+#include <OneWire.h>
 
 extern Adafruit_SH1106G display;
 extern GButton buttonUp, buttonDown, buttonOK, buttonBack;
@@ -37,6 +40,42 @@ struct NRF24Config {
 const byte availablePins[] = {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
 const char* pinNames[] = {"A", "B", "C", "D", "E", "F"};
 const byte AVAILABLE_PINS_COUNT = 6;
+
+// iButton pins (exclude A)
+const byte iButtonPins[] = {GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
+const char* iButtonPinNames[] = {"B", "C", "D", "E", "F"};
+const byte IBUTTON_PINS_COUNT = 5;
+
+// iButton
+static const byte IBUTTON_MENU_ITEM_COUNT = 2;
+static const char* iButtonMenuItems[] = {"Read", "Write"};
+static const char* IBUTTON_DIR = "/iButton";
+static const int IBUTTON_MAX_FILES = 50;
+
+enum IButtonState {
+  IBUTTON_MENU,
+  IBUTTON_READ_WAIT,
+  IBUTTON_READ_DETECTED,
+  IBUTTON_WRITE_BROWSE,
+  IBUTTON_WRITE_WAIT
+};
+
+bool inIButtonSubmenu = false;
+IButtonState iButtonState = IBUTTON_MENU;
+byte iButtonMenuIndex = 0;
+byte iButtonPinIndex = 0; // default B
+byte iButtonPin = GPIO_B;
+OneWire* iButtonWire = nullptr;
+byte iButtonBuffer[8] = {0};
+byte iButtonType = 0x00;
+uint8_t iButtonBits = 64;
+bool iButtonWasPresent = false;
+bool iButtonCrcOk = false;
+
+static const char* iButtonExts[] = {".ibtn"};
+ExplorerEntry iButtonFileList[IBUTTON_MAX_FILES];
+ExplorerState iButtonExplorer;
+ExplorerConfig iButtonExplorerCfg = {IBUTTON_DIR, iButtonExts, 1, true, false, true, true};
 
 // Channels NRF24
 byte wifi_channels[] = {6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 22, 24, 26, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 48, 50, 52, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68};
@@ -439,8 +478,451 @@ void handleNRF24Submenu() {
   }
 }
 
+String formatIButtonCode(const byte* data) {
+  char code[17];
+  for (int i = 0; i < 8; i++) {
+    snprintf(code + (i * 2), sizeof(code) - (i * 2), "%02X", data[i]);
+  }
+  code[16] = '\0';
+  return String(code);
+}
+
+void initIButtonWire() {
+  byte pin = iButtonPins[iButtonPinIndex];
+  if (iButtonWire == nullptr || iButtonPin != pin) {
+    if (iButtonWire != nullptr) {
+      delete iButtonWire;
+      iButtonWire = nullptr;
+    }
+    iButtonPin = pin;
+    iButtonWire = new OneWire(iButtonPin);
+  }
+}
+
+bool detectIButton() {
+  if (iButtonWire == nullptr) return false;
+  return iButtonWire->reset() != 0;
+}
+
+void write_byte_rw1990(byte data, byte pin) {
+  for (int data_bit = 0; data_bit < 8; data_bit++) {
+    if (data & 1) {
+      digitalWrite(pin, LOW);
+      pinMode(pin, OUTPUT);
+      delayMicroseconds(60);
+      pinMode(pin, INPUT);
+      digitalWrite(pin, HIGH);
+    } else {
+      digitalWrite(pin, LOW);
+      pinMode(pin, OUTPUT);
+      pinMode(pin, INPUT);
+      digitalWrite(pin, HIGH);
+    }
+    delay(10);
+    data = data >> 1;
+  }
+}
+
+void readIButtonKey() {
+  if (iButtonWire == nullptr) return;
+  iButtonWire->write(0x33);
+  iButtonWire->read_bytes(iButtonBuffer, 8);
+  iButtonType = iButtonBuffer[0];
+  iButtonBits = 64;
+  iButtonCrcOk = (OneWire::crc8(iButtonBuffer, 7) == iButtonBuffer[7]);
+}
+
+void writeIButtonKey() {
+  if (iButtonWire == nullptr) return;
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0x33);
+
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0x3C);
+  delay(50);
+
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0xD1);
+  delay(50);
+
+  digitalWrite(iButtonPin, LOW);
+  pinMode(iButtonPin, OUTPUT);
+  delayMicroseconds(60);
+  pinMode(iButtonPin, INPUT);
+  digitalWrite(iButtonPin, HIGH);
+  delay(10);
+
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0xD5);
+  delay(50);
+
+  for (byte i = 0; i < 8; i++) {
+    write_byte_rw1990(iButtonBuffer[i], iButtonPin);
+    delayMicroseconds(25);
+  }
+
+  iButtonWire->reset();
+  iButtonWire->skip();
+  iButtonWire->write(0xD1);
+  delayMicroseconds(16);
+  iButtonWire->reset();
+}
+
+void displayIButtonMenu() {
+  display.clearDisplay();
+
+  auto centerText = [](const char* text, int textSize) {
+    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
+  };
+
+  byte next = (iButtonMenuIndex + 1) % IBUTTON_MENU_ITEM_COUNT;
+  byte prev = (iButtonMenuIndex + IBUTTON_MENU_ITEM_COUNT - 1) % IBUTTON_MENU_ITEM_COUNT;
+
+  display.setTextSize(2);
+  display.setCursor(centerText(iButtonMenuItems[iButtonMenuIndex], 2), 25);
+  display.print(iButtonMenuItems[iButtonMenuIndex]);
+
+  display.setTextSize(1);
+  display.setCursor(centerText(iButtonMenuItems[next], 1), 50);
+  display.print(iButtonMenuItems[next]);
+  display.setCursor(centerText(iButtonMenuItems[prev], 1), 7);
+  display.print(iButtonMenuItems[prev]);
+
+  display.setCursor(2, 30);
+  display.print(">");
+  display.setCursor(120, 30);
+  display.print("<");
+  display.display();
+}
+
+void displayIButtonReadWaiting() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(3, 3);
+  display.print("Waiting iButton...");
+  display.drawBitmap(78, 19, image_iButtonKey_bits, 49, 44, 1);
+  display.setCursor(5, 19);
+  display.print("Press UP/DOWN");
+  display.setCursor(5, 29);
+  display.print("to change pin");
+  display.setCursor(86, 42);
+  display.print(iButtonPinNames[iButtonPinIndex]);
+  display.display();
+}
+
+void displayIButtonDetected() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(2, 2);
+  display.print("iButton detected:");
+  display.setCursor(5, 14);
+  display.print("Code:");
+  display.setCursor(5, 26);
+  display.print("Type:");
+  display.setCursor(5, 38);
+  display.print("Bits:");
+  display.setCursor(17, 52);
+  if (iButtonCrcOk) {
+    display.print("Hold OK to save.");
+  } else {
+    display.setCursor(48, 53);
+    display.print("CRC ERROR!");
+  }
+
+  String code = formatIButtonCode(iButtonBuffer);
+  if (code.length() > 15) code = code.substring(0, 15);
+  display.setCursor(35, 14);
+  display.print(code);
+  display.setCursor(35, 26);
+  display.print("0x");
+  if (iButtonType < 0x10) display.print("0");
+  display.print(iButtonType, HEX);
+  display.setCursor(35, 38);
+  display.print(iButtonBits);
+  display.display();
+}
+
+void displayIButtonWriteWaiting() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(1);
+  display.setTextWrap(false);
+  display.setCursor(2, 2);
+  String name = iButtonExplorer.selectedFile.length() > 13 ? iButtonExplorer.selectedFile.substring(0, 13) : iButtonExplorer.selectedFile;
+  display.print("Signal: " + name);
+  display.setCursor(5, 14);
+  display.print("Code:");
+  display.setCursor(5, 26);
+  display.print("Type:");
+  display.setCursor(5, 38);
+  display.print("Bits:");
+  display.setCursor(11, 53);
+  display.print("Waiting iButton...");
+
+  String code = formatIButtonCode(iButtonBuffer);
+  if (code.length() > 15) code = code.substring(0, 15);
+  display.setCursor(35, 14);
+  display.print(code);
+  display.setCursor(35, 26);
+  display.print("0x");
+  if (iButtonType < 0x10) display.print("0");
+  display.print(iButtonType, HEX);
+  display.setCursor(35, 38);
+  display.print(iButtonBits);
+  display.display();
+}
+
+
+bool saveIButtonToSD() {
+  if (!SD.begin(SD_CLK)) {
+    Serial.println(F("SD init failed"));
+    return false;
+  }
+  if (!SD.exists(IBUTTON_DIR)) SD.mkdir(IBUTTON_DIR);
+  int index = 1;
+  String filePath;
+  while (true) {
+    filePath = String(IBUTTON_DIR) + "/iButton_" + String(index) + ".ibtn";
+    if (!SD.exists(filePath)) break;
+    index++;
+  }
+  File file = SD.open(filePath, FILE_WRITE);
+  if (!file) {
+    Serial.print(F("Failed to create file: "));
+    Serial.println(filePath);
+    return false;
+  }
+  file.println(F("Filetype: iButton Key File"));
+  file.println(F("Version: 1"));
+  file.print(F("Code: "));
+  for (int i = 0; i < 8; i++) {
+    if (iButtonBuffer[i] < 0x10) file.print("0");
+    file.print(iButtonBuffer[i], HEX);
+    if (i < 7) file.print(" ");
+  }
+  file.println();
+  file.print(F("Type: 0x"));
+  if (iButtonType < 0x10) file.print("0");
+  file.println(iButtonType, HEX);
+  file.print(F("Bits: "));
+  file.println(iButtonBits);
+  file.close();
+  Serial.print(F("Saved iButton to "));
+  Serial.println(filePath);
+  return true;
+}
+
+bool loadIButtonFromSD(const String& fileName) {
+  File file = SD.open(iButtonExplorer.currentDir + "/" + fileName, FILE_READ);
+  if (!file) {
+    Serial.print(F("Failed to open file: "));
+    Serial.println(fileName);
+    return false;
+  }
+  bool hasCode = false;
+  String line;
+  while (file.available()) {
+    line = file.readStringUntil('\n');
+    line.trim();
+    if (line.startsWith("Code:") || line.startsWith("Key:")) {
+      String codeStr = line.substring(line.indexOf(':') + 1);
+      codeStr.trim();
+      codeStr.replace(" ", "");
+      codeStr.replace(":", "");
+      if (codeStr.length() < 16) {
+        file.close();
+        return false;
+      }
+      for (int i = 0; i < 8; i++) {
+        String byteStr = codeStr.substring(i * 2, i * 2 + 2);
+        iButtonBuffer[i] = strtol(byteStr.c_str(), nullptr, 16);
+      }
+      iButtonType = iButtonBuffer[0];
+      iButtonBits = 64;
+      hasCode = true;
+    } else if (line.startsWith("Type:")) {
+      String typeStr = line.substring(5);
+      typeStr.trim();
+      if (typeStr.startsWith("0x") || typeStr.startsWith("0X")) typeStr = typeStr.substring(2);
+      iButtonType = strtol(typeStr.c_str(), nullptr, 16);
+    } else if (line.startsWith("Bits:")) {
+      iButtonBits = line.substring(5).toInt();
+    }
+  }
+  file.close();
+  return hasCode;
+}
+
+void handleIButtonSubmenu() {
+  buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+
+  if (iButtonState == IBUTTON_MENU) {
+    if (buttonUp.isClick()) {
+      iButtonMenuIndex = (iButtonMenuIndex - 1 + IBUTTON_MENU_ITEM_COUNT) % IBUTTON_MENU_ITEM_COUNT;
+      displayIButtonMenu();
+    }
+    if (buttonDown.isClick()) {
+      iButtonMenuIndex = (iButtonMenuIndex + 1) % IBUTTON_MENU_ITEM_COUNT;
+      displayIButtonMenu();
+    }
+    if (buttonOK.isClick()) {
+      if (iButtonMenuIndex == 0) {
+        iButtonState = IBUTTON_READ_WAIT;
+        initIButtonWire();
+        displayIButtonReadWaiting();
+      } else if (iButtonMenuIndex == 1) {
+        if (!SD.begin(SD_CLK)) {
+          display.clearDisplay();
+          display.setTextSize(1);
+          display.setCursor(1, 1);
+          display.println(F("SD init failed"));
+          display.display();
+          delay(1000);
+          displayIButtonMenu();
+        } else {
+          if (!SD.exists(IBUTTON_DIR)) SD.mkdir(IBUTTON_DIR);
+          ExplorerInit(iButtonExplorer, iButtonFileList, IBUTTON_MAX_FILES, iButtonExplorerCfg);
+          ExplorerLoad(iButtonExplorer, iButtonExplorerCfg);
+          iButtonState = IBUTTON_WRITE_BROWSE;
+          ExplorerDraw(iButtonExplorer, display);
+        }
+      }
+    }
+    if (buttonBack.isClick()) {
+      inIButtonSubmenu = false;
+      display.setTextColor(SH110X_WHITE);
+      displayGPIOMenu(display, gpioMenuIndex);
+    }
+    return;
+  }
+
+  if (iButtonState == IBUTTON_READ_WAIT) {
+    if (buttonUp.isClick()) {
+      iButtonPinIndex = (iButtonPinIndex - 1 + IBUTTON_PINS_COUNT) % IBUTTON_PINS_COUNT;
+      initIButtonWire();
+      displayIButtonReadWaiting();
+    }
+    if (buttonDown.isClick()) {
+      iButtonPinIndex = (iButtonPinIndex + 1) % IBUTTON_PINS_COUNT;
+      initIButtonWire();
+      displayIButtonReadWaiting();
+    }
+    if (buttonBack.isClick()) {
+      iButtonState = IBUTTON_MENU;
+      displayIButtonMenu();
+      return;
+    }
+    if (detectIButton()) {
+      readIButtonKey();
+      displayIButtonDetected();
+      iButtonState = IBUTTON_READ_DETECTED;
+    }
+    return;
+  }
+
+  if (iButtonState == IBUTTON_READ_DETECTED) {
+    if (buttonOK.isClick()) {
+      if (!iButtonCrcOk) {
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setCursor(10, 16);
+        display.print("CRC ERROR!");
+        display.display();
+        delay(1000);
+        iButtonState = IBUTTON_READ_WAIT;
+        displayIButtonReadWaiting();
+        return;
+      }
+      if (saveIButtonToSD()) {
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setCursor(6, 16);
+        display.print("Saved");
+        display.display();
+        delay(1000);
+      }
+      iButtonState = IBUTTON_READ_WAIT;
+      displayIButtonReadWaiting();
+    }
+    if (buttonBack.isClick()) {
+      iButtonState = IBUTTON_MENU;
+      displayIButtonMenu();
+    }
+    return;
+  }
+
+  if (iButtonState == IBUTTON_WRITE_BROWSE) {
+    ExplorerAction action = ExplorerHandle(
+      iButtonExplorer,
+      iButtonExplorerCfg,
+      display,
+      buttonUp.isClick(),
+      buttonDown.isClick(),
+      buttonOK.isClick(),
+      buttonBack.isClick(),
+      buttonBack.isHolded()
+    );
+    if (action == EXPLORER_SELECT_FILE) {
+      if (loadIButtonFromSD(iButtonExplorer.selectedFile)) {
+        initIButtonWire();
+        iButtonWasPresent = false;
+        iButtonState = IBUTTON_WRITE_WAIT;
+        displayIButtonWriteWaiting();
+      } else {
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setCursor(1, 1);
+        display.println(F("Load failed"));
+        display.display();
+        delay(1000);
+        ExplorerDraw(iButtonExplorer, display);
+      }
+    } else if (action == EXPLORER_EXIT) {
+      inIButtonSubmenu = false;
+      display.setTextColor(SH110X_WHITE);
+      displayGPIOMenu(display, gpioMenuIndex);
+    }
+    return;
+  }
+
+  if (iButtonState == IBUTTON_WRITE_WAIT) {
+    if (buttonBack.isClick()) {
+      iButtonState = IBUTTON_WRITE_BROWSE;
+      ExplorerDraw(iButtonExplorer, display);
+      return;
+    }
+    bool present = detectIButton();
+    if (present && !iButtonWasPresent) {
+      writeIButtonKey();
+      display.clearDisplay();
+      display.drawBitmap(0, 9, image_iButtonDolphinSuccess_bits, 92, 55, 1);
+      display.setTextColor(1);
+      display.setTextWrap(false);
+      display.setCursor(53, 3);
+      display.print("Successfully");
+      display.setCursor(79, 13);
+      display.print("written");
+      display.display();
+      delay(1000);
+      displayIButtonWriteWaiting();
+      iButtonWasPresent = true;
+    } else if (!present) {
+      iButtonWasPresent = false;
+    }
+  }
+}
+
 void handleGPIOSubmenu() {
   if (inNRF24Submenu || inNRF24Config || inJammingMenu || inJammingActive || inSpectrumAnalyzer) return handleNRF24Submenu();
+  if (inIButtonSubmenu) return handleIButtonSubmenu();
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
   if (buttonUp.isClick()) {
     gpioMenuIndex = (gpioMenuIndex - 1 + GPIO_MENU_ITEM_COUNT) % GPIO_MENU_ITEM_COUNT;
@@ -454,11 +936,10 @@ void handleGPIOSubmenu() {
     Serial.printf("GPIO option: %s\n", gpioMenuItems[gpioMenuIndex]);
     switch (gpioMenuIndex) {
       case 0:
-        display.clearDisplay();
-        display.setTextSize(1);
-        display.setCursor(1, 1);
-        display.println(F("In development..."));
-        display.display();
+        inIButtonSubmenu = true;
+        iButtonState = IBUTTON_MENU;
+        iButtonMenuIndex = 0;
+        displayIButtonMenu();
         break;
       case 1:
         inNRF24Submenu = true;

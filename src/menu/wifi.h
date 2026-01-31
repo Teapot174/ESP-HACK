@@ -4,8 +4,8 @@
 #include <Adafruit_SH110X.h>
 #include "CONFIG.h"
 
-#define WIFI_MENU_ITEM_COUNT 4
-static const char* wifiMenuItems[] = {"Deauther", "Beacon", "Portal", "Wardrvng"};
+#define WIFI_MENU_ITEM_COUNT 5
+static const char* wifiMenuItems[] = {"Deauther", "Beacon", "Portal", "Wardrvng", "Packets"};
 
 void displayWiFiMenu(Adafruit_SH1106G &display, byte menuIndex) {
   display.clearDisplay();

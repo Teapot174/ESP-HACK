@@ -3,6 +3,7 @@
 #include <GyverButton.h>
 #include <SD.h>
 #include <SPI.h>
+#include "esp_wifi.h"
 #include "CONFIG.h"
 #include "interface.h"
 #include "subghz.h"
@@ -11,6 +12,7 @@
 #include "menu/infrared.h"
 #include "menu/gpio.h"
 #include "menu/settings.h"
+#include "Explorer.h"
 
 void handleWiFiSubmenu();
 void handleBluetoothSubmenu();
@@ -214,6 +216,8 @@ void setup() {
     Serial.println(F("SH110X allocation failed"));
     for(;;);
   }
+  display.clearDisplay();
+  display.display();
 
   sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
   sdSPI.setFrequency(4000000);
@@ -238,6 +242,7 @@ void setup() {
   if (!SD.exists("/SubGHz")) SD.mkdir("/SubGHz");
   if (!SD.exists("/Infrared")) SD.mkdir("/Infrared");
   if (!SD.exists("/GPIO")) SD.mkdir("/GPIO");
+  if (!SD.exists("/iButton")) SD.mkdir("/iButton");
 
   loadConfig();
 

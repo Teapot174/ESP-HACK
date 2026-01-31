@@ -1,5 +1,6 @@
 #include "subghz.h"
 #include "menu/subghz.h"
+#include "Explorer.h"
 #include <Adafruit_SH110X.h>
 #include <SD.h>
 #include <SPI.h>
@@ -74,18 +75,10 @@ const BruteProtocol protoChamber = {chamberZero, 2, chamberOne, 2, nullptr, 0, c
 const BruteProtocol* currentBruteProto = nullptr;
 
 #define MAX_FILES 50
-struct FileEntry {
-  String name;
-  bool isDir;
-};
-FileEntry fileList[MAX_FILES];
-int fileCount = 0;
-int fileIndex = 0;
-bool inFileExplorer = false;
-bool inDeleteConfirm = false;
-String selectedFile = "";
-String currentDir = "/SubGHz";
-bool SubFiles = false;
+static const char* subExts[] = {".sub"};
+ExplorerEntry subFileList[MAX_FILES];
+ExplorerState subExplorer;
+ExplorerConfig subExplorerCfg = {"/SubGHz", subExts, 1, true, false, true, true};
 int nextSignalIndex = 1;
 bool nextSignalIndexReady = false;
 
@@ -118,12 +111,9 @@ void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, in
 void RCSwitch_RAW_send(int *ptrtransmittimings);
 void OLED_printAnalyzer(bool signalReceived = false, float detectedFreq = 0.0);
 void OLED_printJammer();
-void OLED_printFileExplorer();
-void OLED_printDeleteConfirm();
 void startJamming();
 void stopJamming();
 String getTypeName(emKeys tp);
-void loadFileList();
 bool initRfModule(String mode, float freq);
 void deinitRfModule();
 void resetButtonStates();
@@ -170,8 +160,6 @@ void runSubGHz() {
   rcswitch.enableReceive(CC1101_GDO0);
   emMenuState menuState = menuMain;
   menuIndex = 0;
-  SubFiles = false;
-  inDeleteConfirm = false;
   OLED_printSubGHzMenu(display, menuIndex);
 
   while (true) {
@@ -193,7 +181,6 @@ void runSubGHz() {
       if (buttonOK.isClick()) {
         if (menuIndex == 0) {
           menuState = menuReceive;
-          inDeleteConfirm = false;
           setupCC1101();
           rcswitch.disableReceive();
           rcswitch.enableReceive(CC1101_GDO0);
@@ -205,18 +192,12 @@ void runSubGHz() {
           OLED_printWaitingSignal();
         } else if (menuIndex == 1) {
           menuState = menuTransmit;
-          inFileExplorer = true;
-          inDeleteConfirm = false;
-          SubFiles = true;
-          fileIndex = 0;
-          fileCount = 0;
-          currentDir = "/SubGHz";
-          loadFileList();
-          OLED_printFileExplorer();
+          ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
+          ExplorerLoad(subExplorer, subExplorerCfg);
+          ExplorerDraw(subExplorer, display);
           resetButtonStates();
         } else if (menuIndex == 2) {
           menuState = menuAnalyzer;
-          inDeleteConfirm = false;
           setupCC1101();
           rcswitch.disableReceive();
           current_scan_index = 0;
@@ -225,19 +206,15 @@ void runSubGHz() {
           OLED_printAnalyzer();
         } else if (menuIndex == 3) {
           menuState = menuJammer;
-          inDeleteConfirm = false;
           isJamming = false;
           OLED_printJammer();
         } else if (menuIndex == 4) {
           menuState = menuBruteforce;
-          inDeleteConfirm = false;
           bruteRunning = false;
           OLED_printBruteIntro();
         }
       }
       if (buttonBack.isClick()) {
-        SubFiles = false;
-        inDeleteConfirm = false;
         break;
       }
     } else if (menuState == menuReceive) {
@@ -276,8 +253,6 @@ void runSubGHz() {
       }
       if (buttonBack.isClick()) {
         menuState = menuMain;
-        SubFiles = false;
-        inDeleteConfirm = false;
         resetButtonStates();
         OLED_printSubGHzMenu(display, menuIndex);
       }
@@ -297,113 +272,44 @@ void runSubGHz() {
           }
         }
       }
-    } else if (menuState == menuTransmit && inFileExplorer && !inDeleteConfirm) {
-      if (buttonUp.isClick()) {
-        fileIndex = (fileIndex == 0) ? (fileCount - 1) : fileIndex - 1;
-        OLED_printFileExplorer();
-      }
-      if (buttonDown.isClick()) {
-        fileIndex = (fileIndex == fileCount - 1) ? 0 : fileIndex + 1;
-        OLED_printFileExplorer();
-      }
-      if (buttonOK.isClick() && fileCount > 0) {
-        if (fileList[fileIndex].isDir) {
-          currentDir += "/" + fileList[fileIndex].name;
-          fileIndex = 0;
-          fileCount = 0;
-          loadFileList();
-          OLED_printFileExplorer();
-        } else {
-          inFileExplorer = false;
-          inDeleteConfirm = false;
-          selectedFile = fileList[fileIndex].name;
-          resetButtonStates();
-          if (loadKeyFromSD(selectedFile, &keyData1)) {
-            OLED_printKey(&keyData1, selectedFile);
-          } else {
-            OLED_printError(F("Failed to load file"), true);
-            delay(1000);
-            inFileExplorer = true;
-            OLED_printFileExplorer();
-          }
-        }
-      }
-      if (buttonBack.isHolded() && fileCount > 0 && SubFiles) {
-        inDeleteConfirm = true;
+    } else if (menuState == menuTransmit && subExplorer.inExplorer) {
+      ExplorerAction action = ExplorerHandle(
+        subExplorer,
+        subExplorerCfg,
+        display,
+        buttonUp.isClick(),
+        buttonDown.isClick(),
+        buttonOK.isClick(),
+        buttonBack.isClick(),
+        buttonBack.isHolded()
+      );
+      if (action == EXPLORER_SELECT_FILE) {
+        subExplorer.inExplorer = false;
         resetButtonStates();
-        OLED_printDeleteConfirm();
-      }
-      if (buttonBack.isClick()) {
-        if (currentDir != "/SubGHz") {
-          int lastSlash = currentDir.lastIndexOf('/');
-          currentDir = currentDir.substring(0, lastSlash);
-          if (currentDir == "") currentDir = "/SubGHz";
-          fileIndex = 0;
-          fileCount = 0;
-          loadFileList();
-          OLED_printFileExplorer();
+        if (loadKeyFromSD(subExplorer.selectedFile, &keyData1)) {
+          OLED_printKey(&keyData1, subExplorer.selectedFile);
         } else {
-          menuState = menuMain;
-          inFileExplorer = false;
-          inDeleteConfirm = false;
-          SubFiles = false;
-          selectedFile = "";
-          resetButtonStates();
-          OLED_printSubGHzMenu(display, menuIndex);
-        }
-      }
-    } else if (menuState == menuTransmit && inFileExplorer && inDeleteConfirm) {
-      
-      if (buttonUp.isClick() || buttonDown.isClick()) {
-      }
-      if (buttonOK.isClick()) {
-        String filePath = currentDir + "/" + fileList[fileIndex].name;
-        if (SD.remove(filePath)) {
-          display.clearDisplay();
-          display.drawBitmap(5, 2, image_DolphinMafia_bits, 119, 62, SH110X_WHITE);
-          display.setTextColor(SH110X_WHITE);
-          display.setCursor(84, 15);
-          display.print("Deleted");
-          display.display();
-          Serial.print(F("File deleted: "));
-          Serial.println(filePath);
-          for (int i = fileIndex; i < fileCount - 1; i++) {
-            fileList[i] = fileList[i + 1];
-          }
-          if (fileCount > 0) {
-            fileCount--;
-          }
-          if (fileIndex >= fileCount && fileCount > 0) {
-            fileIndex = fileCount - 1;
-          } else if (fileCount == 0) {
-            fileIndex = 0;
-          }
+          OLED_printError(F("Failed to load file"), true);
           delay(1000);
-          inDeleteConfirm = false;
-          OLED_printFileExplorer();
-        } else {
-          OLED_printError(F("Failed to delete"), true);
-          Serial.print(F("Failed to delete file: "));
-          Serial.println(filePath);
-          delay(1000);
-          inDeleteConfirm = false;
-          OLED_printFileExplorer();
+          subExplorer.inExplorer = true;
+          ExplorerDraw(subExplorer, display);
         }
+      } else if (action == EXPLORER_EXIT) {
+        menuState = menuMain;
+        subExplorer.inExplorer = false;
+        subExplorer.selectedFile = "";
+        resetButtonStates();
+        OLED_printSubGHzMenu(display, menuIndex);
       }
-      if (buttonBack.isClick()) {
-        inDeleteConfirm = false;
-        OLED_printFileExplorer();
-      }
-    } else if (menuState == menuTransmit && !inFileExplorer) {
+    } else if (menuState == menuTransmit && !subExplorer.inExplorer) {
       if (buttonOK.isClick()) {
         sendSynthKey(&keyData1);
         restoreReceiveMode();
       }
       if (buttonBack.isClick()) {
-        inFileExplorer = true;
-        inDeleteConfirm = false;
+        subExplorer.inExplorer = true;
         resetButtonStates();
-        OLED_printFileExplorer();
+        ExplorerDraw(subExplorer, display);
       }
     } else if (menuState == menuBruteforce) {
       if (buttonOK.isHolded()) {
@@ -428,8 +334,6 @@ void runSubGHz() {
       }
       if (buttonBack.isClick()) {
         menuState = menuMain;
-        SubFiles = false;
-        inDeleteConfirm = false;
         bruteRunning = false;
         resetButtonStates();
         OLED_printSubGHzMenu(display, menuIndex);
@@ -493,8 +397,6 @@ void runSubGHz() {
     } else if (menuState == menuAnalyzer) {
       if (buttonBack.isClick()) {
         menuState = menuMain;
-        SubFiles = false;
-        inDeleteConfirm = false;
         rcswitch.disableReceive();
         restoreReceiveMode();
         resetButtonStates();
@@ -547,8 +449,6 @@ void runSubGHz() {
           isJamming = false;
         }
         menuState = menuMain;
-        SubFiles = false;
-        inDeleteConfirm = false;
         restoreReceiveMode();
         resetButtonStates();
         OLED_printSubGHzMenu(display, menuIndex);
@@ -563,8 +463,6 @@ void runSubGHz() {
   if (bruteRfActive) {
     bruteStopTx();
   }
-  SubFiles = false;
-  inDeleteConfirm = false;
   restoreReceiveMode();
 }
 
@@ -762,27 +660,20 @@ void OLED_printError(String st, bool err) {
   display.display();
 }
 
-void OLED_printDeleteConfirm() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SH110X_WHITE);
-  display.setTextWrap(false);
-  display.setCursor(1, 1);
-  String name = fileList[fileIndex].name;
-  if (name.length() > 16) name = name.substring(0, 16);
-  display.print("File: " + name);
-  display.setCursor(1, 24);
-  display.print("Press OK to DELETE.");
-  display.display();
+static void ensureSubExplorerDir() {
+  if (subExplorer.currentDir.length() == 0) {
+    subExplorer.currentDir = subExplorerCfg.rootDir;
+  }
 }
 
 bool saveKeyToSD(tpKeyData* kd) {
   if (!kd || kd->codeLenth == 0 || kd->frequency == 0.0) {
     return false;
   }
+  ensureSubExplorerDir();
   if (!nextSignalIndexReady) {
     int maxSignalIndex = 0;
-    File dir = SD.open(currentDir);
+    File dir = SD.open(subExplorer.currentDir);
     if (dir) {
       while (true) {
         File entry = dir.openNextFile();
@@ -808,14 +699,14 @@ bool saveKeyToSD(tpKeyData* kd) {
   int fileNum = (nextSignalIndex > 0) ? nextSignalIndex : 1;
   String fileName;
   while (fileNum <= 999) {
-    fileName = currentDir + "/Signal_" + String(fileNum) + ".sub";
+    fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
     if (!SD.exists(fileName)) break;
     fileNum++;
   }
   if (fileNum > 999) {
     fileNum = 1;
     while (fileNum <= 999) {
-      fileName = currentDir + "/Signal_" + String(fileNum) + ".sub";
+      fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
       if (!SD.exists(fileName)) break;
       fileNum++;
     }
@@ -856,7 +747,8 @@ bool saveKeyToSD(tpKeyData* kd) {
 }
 
 bool loadKeyFromSD(String fileName, tpKeyData* kd) {
-  File file = SD.open(currentDir + "/" + fileName, FILE_READ);
+  ensureSubExplorerDir();
+  File file = SD.open(subExplorer.currentDir + "/" + fileName, FILE_READ);
   if (!file) {
     Serial.print(F("Failed to open file: "));
     Serial.println(fileName);
@@ -904,96 +796,6 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
   return true;
 }
 
-void loadFileList() {
-  fileCount = 0;
-  nextSignalIndexReady = false;
-  File dir = SD.open(currentDir);
-  if (!dir) {
-    Serial.print(F("Failed to open directory: "));
-    Serial.println(currentDir);
-    return;
-  }
-  while (fileCount < MAX_FILES) {
-    File entry = dir.openNextFile();
-    if (!entry) break;
-    if (entry.isDirectory()) {
-      fileList[fileCount].name = entry.name();
-      fileList[fileCount].isDir = true;
-      fileCount++;
-    }
-    entry.close();
-  }
-  dir.rewindDirectory();
-  while (true) {
-    File entry = dir.openNextFile();
-    if (!entry) break;
-    if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
-      String entryName = entry.name();
-      if (fileCount < MAX_FILES) {
-        fileList[fileCount].name = entryName;
-        fileList[fileCount].isDir = false;
-        fileCount++;
-      }
-    }
-    entry.close();
-  }
-  dir.close();
-  Serial.print(F("Found "));
-  Serial.print(fileCount);
-  Serial.println(F(" entries"));
-}
-
-void OLED_printFileExplorer() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextWrap(false);
-  display.setTextColor(SH110X_WHITE);
-
-  display.setCursor(1, 1);
-  display.print(currentDir);
-
-  display.setCursor(1, 12);
-  display.println(F("---------------------"));
-
-  if (fileCount == 0) {
-    display.setCursor(1, 24);
-    display.println(F("No files."));
-    display.display();
-    return;
-  }
-
-  const int perPage = 4;
-  int maxStart = (fileCount > perPage) ? (fileCount - perPage) : 0;
-  int startIndex = fileIndex - 1;
-  if (startIndex < 0) startIndex = 0;
-  if (startIndex > maxStart) startIndex = maxStart;
-
-  int itemsToShow = fileCount - startIndex;
-  if (itemsToShow > perPage) itemsToShow = perPage;
-
-  const int baseRow = 2;
-
-  for (int i = 0; i < itemsToShow; i++) {
-    int idx = startIndex + i;
-    String name = fileList[idx].name;
-    if (fileList[idx].isDir) {
-    }
-    if (name.length() > 18) name = name.substring(0, 18);
-
-    int y = (i + baseRow) * 11;
-
-    if (idx == fileIndex) {
-      display.fillRect(0, y - 1, 128, 11, SH110X_WHITE);
-      display.setTextColor(SH110X_BLACK);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.setCursor(1, y);
-    display.println(name);
-  }
-
-  display.display();
-}
 
 void OLED_printBruteIntro() {
   display.clearDisplay();
@@ -1132,7 +934,7 @@ void bruteSendCode(uint16_t code) {
 
 void sendSynthKey(tpKeyData* kd) {
   Serial.println(F("Starting transmission"));
-  OLED_printKey(kd, selectedFile, true);
+  OLED_printKey(kd, subExplorer.selectedFile, true);
 
   Serial.print(F("Transmitting key, protocol: "));
   Serial.print(getTypeName(kd->type));
@@ -1171,7 +973,7 @@ void sendSynthKey(tpKeyData* kd) {
     display.display();
     OLED_printError(F("CC1101 init Failed."), true);
     delay(1000);
-    OLED_printKey(kd, selectedFile);
+    OLED_printKey(kd, subExplorer.selectedFile);
     return;
   }
 
@@ -1189,7 +991,7 @@ void sendSynthKey(tpKeyData* kd) {
       Serial.println(modulation);
       OLED_printError(F("Unsupported modulation"), true);
       delay(1000);
-      OLED_printKey(kd, selectedFile);
+      OLED_printKey(kd, subExplorer.selectedFile);
       deinitRfModule();
       return;
     }
@@ -1210,7 +1012,7 @@ void sendSynthKey(tpKeyData* kd) {
       Serial.println(F("Memory allocation failed"));
       OLED_printError(F("Memory error"), true);
       delay(1000);
-      OLED_printKey(kd, selectedFile);
+      OLED_printKey(kd, subExplorer.selectedFile);
       deinitRfModule();
       return;
     }
@@ -1257,7 +1059,7 @@ void sendSynthKey(tpKeyData* kd) {
 
   deinitRfModule();
 
-  OLED_printKey(kd, selectedFile);
+  OLED_printKey(kd, subExplorer.selectedFile);
 }
 
 void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat) {
