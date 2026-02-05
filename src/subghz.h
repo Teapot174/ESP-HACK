@@ -1,15 +1,14 @@
 #ifndef SUBGHZ_H
 #define SUBGHZ_H
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include <EEPROM.h>
 #include <ELECHOUSE_CC1101_SRC_DRV.h>
 #include <RCSwitch.h>
 #include "CONFIG.h"
 
-extern Adafruit_SH1106G display;
+extern DisplayType display;
 extern GButton buttonUp;
 extern GButton buttonDown;
 extern GButton buttonOK;

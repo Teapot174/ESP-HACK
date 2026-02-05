@@ -1,7 +1,7 @@
 #ifndef SETTINGS_MENU_H
 #define SETTINGS_MENU_H
 
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include "CONFIG.h"
 
 #define SETTINGS_MENU_ITEM_COUNT 3
@@ -35,7 +35,7 @@ static const unsigned char PROGMEM image_Teapot_bits[] = {
 
 
 
-void displaySettingsMenu(Adafruit_SH1106G &display, byte menuIndex) {
+void displaySettingsMenu(DisplayType &display, byte menuIndex) {
   display.clearDisplay();
 
   byte next = (menuIndex + 1) % SETTINGS_MENU_ITEM_COUNT;

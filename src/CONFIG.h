@@ -8,6 +8,10 @@
 #define OLED_RESET -1
 #define OLED_SCL 22
 #define OLED_SDA 21
+// Driver
+#define DISPLAY_SH1106 0
+#define DISPLAY_SSD1306 1
+#define DISPLAY_TYPE DISPLAY_SSD1306   // DISPLAY_SH1106 | DISPLAY_SSD1306
 
 // Buttons
 #define BUTTON_UP 27    // Up

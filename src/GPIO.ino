@@ -2,14 +2,14 @@
 #include "menu/subghz.h"
 #include "Explorer.h"
 #include "CONFIG.h"
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include <SPI.h>
 #include <RF24.h>
 #include <SD.h>
 #include <OneWire.h>
 
-extern Adafruit_SH1106G display;
+extern DisplayType display;
 extern GButton buttonUp, buttonDown, buttonOK, buttonBack;
 extern bool inMenu;
 extern byte currentMenu, gpioMenuIndex;

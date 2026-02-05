@@ -200,7 +200,7 @@ void ExplorerLoad(ExplorerState& state, const ExplorerConfig& cfg) {
   dir.close();
 }
 
-void ExplorerDraw(const ExplorerState& state, Adafruit_SH1106G& display) {
+void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextWrap(false);
@@ -248,7 +248,7 @@ void ExplorerDraw(const ExplorerState& state, Adafruit_SH1106G& display) {
   display.display();
 }
 
-void ExplorerDrawDeleteConfirm(const ExplorerState& state, Adafruit_SH1106G& display) {
+void ExplorerDrawDeleteConfirm(const ExplorerState& state, DisplayType& display) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
@@ -263,7 +263,7 @@ void ExplorerDrawDeleteConfirm(const ExplorerState& state, Adafruit_SH1106G& dis
   display.display();
 }
 
-void ExplorerDrawSaveResult(Adafruit_SH1106G& display) {
+void ExplorerDrawSaveResult(DisplayType& display) {
   display.clearDisplay();
   display.drawBitmap(16, 6, image_DolphinSaved_bits, 92, 58, SH110X_WHITE);
   display.setTextColor(SH110X_WHITE);
@@ -282,7 +282,7 @@ static bool explorerDeleteSelected(const ExplorerState& state) {
   return SD.remove(filePath);
 }
 
-static void explorerShowDeleteResult(Adafruit_SH1106G& display, bool ok) {
+static void explorerShowDeleteResult(DisplayType& display, bool ok) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
@@ -299,7 +299,7 @@ static void explorerShowDeleteResult(Adafruit_SH1106G& display, bool ok) {
   delay(1000);
 }
 
-ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, Adafruit_SH1106G& display,
+ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, DisplayType& display,
                               bool upClick, bool downClick, bool okClick, bool backClick, bool backHold) {
   if (state.inDeleteConfirm) {
     if (okClick) {

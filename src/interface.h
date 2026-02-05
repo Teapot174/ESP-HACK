@@ -1,8 +1,7 @@
 #ifndef INTERFACE_H
 #define INTERFACE_H
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include "CONFIG.h"
 
 #define MENU_ITEM_COUNT 6
@@ -336,7 +335,7 @@ extern const unsigned char PROGMEM image_DOTsel_bits[];
 extern const unsigned char PROGMEM image_DOT_bits[];
 
 
-void OLED_printLogo(Adafruit_SH1106G &display) {
+void OLED_printLogo(DisplayType &display) {
   display.clearDisplay();
   display.drawBitmap(0, 0, image_ESPHACK_bits, 128, 64, 1);
   display.setTextColor(1);
@@ -347,7 +346,7 @@ void OLED_printLogo(Adafruit_SH1106G &display) {
 }
 
 // Main menu
-void OLED_printMenu(Adafruit_SH1106G &display, byte menuIndex) {
+void OLED_printMenu(DisplayType &display, byte menuIndex) {
   display.clearDisplay();
 
   if (menuIndex == 0) { // WiFi

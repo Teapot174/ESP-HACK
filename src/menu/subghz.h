@@ -1,8 +1,7 @@
 #ifndef SUBGHZ_MENU_H
 #define SUBGHZ_MENU_H
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include "CONFIG.h"
 
 #define SCREEN_WIDTH 128
@@ -375,7 +374,7 @@ static const unsigned char PROGMEM image_DolphinWait_bits[] = {
 #define SUBGHZ_MENU_ITEM_COUNT 5
 static const char* subghzMenuItems[] = {"SubRead", "SubSend", "Analyzer", "Jammer", "Brute"};
 
-void OLED_printSubGHzMenu(Adafruit_SH1106G &display, byte menuIndex) {
+void OLED_printSubGHzMenu(DisplayType &display, byte menuIndex) {
   display.clearDisplay();
   display.setTextColor(1);
   display.setTextWrap(false);

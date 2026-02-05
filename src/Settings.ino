@@ -1,9 +1,9 @@
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include "CONFIG.h"
 #include "menu/settings.h"
 
-extern Adafruit_SH1106G display;
+extern DisplayType display;
 extern GButton buttonUp;
 extern GButton buttonDown;
 extern GButton buttonOK;
@@ -21,7 +21,7 @@ extern const char* colorOptions[];
 extern const byte COLOR_OPTION_COUNT;
 extern void applyColorScheme();
 extern void saveConfig();
-extern void OLED_printMenu(Adafruit_SH1106G &display, byte menuIndex);
+extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 extern void resetActivityTimer();
 
 enum SettingsDetail : byte { SETTINGS_NONE, SETTINGS_COLOR, SETTINGS_STANDBY, SETTINGS_ABOUT };

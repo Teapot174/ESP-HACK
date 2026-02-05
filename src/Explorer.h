@@ -1,7 +1,7 @@
 #ifndef ESP_HACK_EXPLORER_H
 #define ESP_HACK_EXPLORER_H
 
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <SD.h>
 
 struct ExplorerEntry {
@@ -43,10 +43,10 @@ enum ExplorerAction {
 
 void ExplorerInit(ExplorerState& state, ExplorerEntry* buffer, int bufferSize, const ExplorerConfig& cfg);
 void ExplorerLoad(ExplorerState& state, const ExplorerConfig& cfg);
-void ExplorerDraw(const ExplorerState& state, Adafruit_SH1106G& display);
-void ExplorerDrawDeleteConfirm(const ExplorerState& state, Adafruit_SH1106G& display);
-void ExplorerDrawSaveResult(Adafruit_SH1106G& display);
-ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, Adafruit_SH1106G& display,
+void ExplorerDraw(const ExplorerState& state, DisplayType& display);
+void ExplorerDrawDeleteConfirm(const ExplorerState& state, DisplayType& display);
+void ExplorerDrawSaveResult(DisplayType& display);
+ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, DisplayType& display,
                               bool upClick, bool downClick, bool okClick, bool backClick, bool backHold);
 
 #endif

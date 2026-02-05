@@ -1,5 +1,4 @@
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include <IRremoteESP8266.h>
 #include <IRrecv.h>
@@ -30,7 +29,7 @@ enum TvbgRegion : uint8_t { TVBG_REGION_EU = 0, TVBG_REGION_NA = 1 };
 
 #include "tvbgcodes.h"
 
-extern Adafruit_SH1106G display;
+extern DisplayType display;
 extern GButton buttonUp;
 extern GButton buttonDown;
 extern GButton buttonOK;

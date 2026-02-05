@@ -1,8 +1,7 @@
 #ifndef INFRARED_MENU_H
 #define INFRARED_MENU_H
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include "CONFIG.h"
 
 #define IR_MENU_ITEM_COUNT 5
@@ -76,7 +75,7 @@ static const unsigned char PROGMEM image_InfraredLearnShort_bits[] = {
 
 
 
-void displayIRMenu(Adafruit_SH1106G &display, byte menuIndex) {
+void displayIRMenu(DisplayType &display, byte menuIndex) {
   display.clearDisplay();
   
   auto centerText = [](const char* text, int textSize) {

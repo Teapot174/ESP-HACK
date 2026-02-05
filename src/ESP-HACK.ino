@@ -1,5 +1,4 @@
-#include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include <SD.h>
 #include <SPI.h>
@@ -20,7 +19,7 @@ void handleIRSubmenu();
 void handleGPIOSubmenu();
 void handleSettingsSubmenu();
 
-Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+DisplayType display = DisplayType(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 GButton buttonUp(BUTTON_UP, HIGH_PULL, NORM_OPEN);
 GButton buttonDown(BUTTON_DOWN, HIGH_PULL, NORM_OPEN);
 GButton buttonOK(BUTTON_OK, HIGH_PULL, NORM_OPEN);
@@ -212,10 +211,17 @@ void setup() {
 
   Wire.begin(OLED_SDA, OLED_SCL);
   
+  #if DISPLAY_TYPE == DISPLAY_SSD1306
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADR)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  #else
   if (!display.begin(OLED_ADR)) {
     Serial.println(F("SH110X allocation failed"));
     for(;;);
   }
+  #endif
   display.clearDisplay();
   display.display();
 

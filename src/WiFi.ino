@@ -1,5 +1,5 @@
 #define DEAUTHER
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -11,11 +11,11 @@
 #include "deauth.h"
 #include "evilportal.h"
 
-extern Adafruit_SH1106G display;
+extern DisplayType display;
 extern GButton buttonUp, buttonDown, buttonOK, buttonBack;
 extern bool inMenu;
 extern byte currentMenu, wifiMenuIndex;
-extern void OLED_printMenu(Adafruit_SH1106G &display, byte menuIndex);
+extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 
 bool inSpamMenu = false, isSpamming = false;
 bool inEvilPortal = false, apRunning = false;

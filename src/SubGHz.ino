@@ -1,7 +1,7 @@
 #include "subghz.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <SD.h>
 #include <SPI.h>
 #include <RCSwitch.h>

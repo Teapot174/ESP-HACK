@@ -1,7 +1,7 @@
 #ifndef GPIO_MENU_H
 #define GPIO_MENU_H
 
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include "CONFIG.h"
 
 #define GPIO_MENU_ITEM_COUNT 3
@@ -90,7 +90,7 @@ static const unsigned char PROGMEM image_iButtonDolphinSuccess_bits[] = {
 };
 
 
-void displayGPIOMenu(Adafruit_SH1106G &display, byte menuIndex) {
+void displayGPIOMenu(DisplayType &display, byte menuIndex) {
   display.clearDisplay();
   
   auto centerText = [](const char* text, int textSize) {

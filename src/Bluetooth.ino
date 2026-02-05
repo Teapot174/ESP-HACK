@@ -1,4 +1,4 @@
-#include <Adafruit_SH110X.h>
+#include "display.h"
 #include <GyverButton.h>
 #include "CONFIG.h"
 #include "menu/bluetooth.h"
@@ -14,7 +14,7 @@
 #include <string>
 #include <algorithm>
 
-extern Adafruit_SH1106G display;
+extern DisplayType display;
 extern GButton buttonUp;
 extern GButton buttonDown;
 extern GButton buttonOK;
@@ -27,7 +27,7 @@ extern byte badBLEScriptIndex;
 extern bool scriptSelected;
 extern byte selectedScript;
 
-void displayBadKBScriptExec(Adafruit_SH1106G &display, const String& filename, const std::vector<String>& logs, int logTop);
+void displayBadKBScriptExec(DisplayType &display, const String& filename, const std::vector<String>& logs, int logTop);
 
 static const uint8_t hidReportDescriptor[] = {
   0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
@@ -153,7 +153,7 @@ static int _bb_parseDelay(const String& s) {
   return (int)v;
 }
 
-static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, Adafruit_SH1106G &display) {
+static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, DisplayType &display) {
   if (!gServer || !gInput) {
     logs.push_back("BLE not initialized");
     Serial.println("[BadKB] BLE not initialized");
@@ -310,11 +310,11 @@ static void loadBadKBFileList() {
   ExplorerLoad(badKBExplorer, badKBExplorerCfg);
 }
 
-void drawBadKBExplorer(Adafruit_SH1106G &display) {
+void drawBadKBExplorer(DisplayType &display) {
   ExplorerDraw(badKBExplorer, display);
 }
 
-void displayBadKBScriptExec(Adafruit_SH1106G &display, const String& filename, const std::vector<String>& logs, int logTop) {
+void displayBadKBScriptExec(DisplayType &display, const String& filename, const std::vector<String>& logs, int logTop) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
