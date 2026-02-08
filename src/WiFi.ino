@@ -628,7 +628,7 @@ void stopEvilPortal() {
   sdSPI.end();
   delay(100);
   sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
-  SD.begin(-1, sdSPI);
+  SD.begin(SD_CS, sdSPI);
 }
 
 void startWardriving() {

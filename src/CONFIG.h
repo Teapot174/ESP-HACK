@@ -20,9 +20,10 @@
 #define BUTTON_BACK 32  // Back
 
 // SD-Card
-#define SD_MOSI 15
-#define SD_CLK 2
-#define SD_MISO 0
+#define SD_MOSI 23
+#define SD_CLK 18
+#define SD_MISO 19
+#define SD_CS 2
 
 // CC1101
 #define CC1101_GDO0 4

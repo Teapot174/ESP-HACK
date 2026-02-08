@@ -13,6 +13,7 @@ extern DisplayType display;
 extern GButton buttonUp, buttonDown, buttonOK, buttonBack;
 extern bool inMenu;
 extern byte currentMenu, gpioMenuIndex;
+extern SPIClass sdSPI;
 
 // NRF24
 RF24 radio(CC1101_CS, CC1101_GDO0);
@@ -41,10 +42,10 @@ const byte availablePins[] = {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
 const char* pinNames[] = {"A", "B", "C", "D", "E", "F"};
 const byte AVAILABLE_PINS_COUNT = 6;
 
-// iButton pins (exclude A)
-const byte iButtonPins[] = {GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
-const char* iButtonPinNames[] = {"B", "C", "D", "E", "F"};
-const byte IBUTTON_PINS_COUNT = 5;
+// iButton pins
+const byte iButtonPins[] = {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
+const char* iButtonPinNames[] = {"A", "B", "C", "D", "E", "F"};
+const byte IBUTTON_PINS_COUNT = 6;
 
 // iButton
 static const byte IBUTTON_MENU_ITEM_COUNT = 2;
@@ -63,8 +64,8 @@ enum IButtonState {
 bool inIButtonSubmenu = false;
 IButtonState iButtonState = IBUTTON_MENU;
 byte iButtonMenuIndex = 0;
-byte iButtonPinIndex = 0; // default B
-byte iButtonPin = GPIO_B;
+byte iButtonPinIndex = 0; // default A
+byte iButtonPin = GPIO_A;
 OneWire* iButtonWire = nullptr;
 byte iButtonBuffer[8] = {0};
 byte iButtonType = 0x00;
@@ -144,7 +145,7 @@ void runSpectrumAnalyzer() {
 }
 
 void saveNRF24Config() {
-  if (!SD.begin(SD_CLK)) {
+  if (!SD.begin(SD_CS, sdSPI)) {
     Serial.println(F("SD init failed"));
     return;
   }
@@ -200,7 +201,7 @@ bool loadNRF24ConfigFromFile(const char* path) {
 }
 
 void loadNRF24Config() {
-  if (!SD.begin(SD_CLK)) {
+  if (!SD.begin(SD_CS, sdSPI)) {
     Serial.println(F("SD init failed"));
     return;
   }
@@ -682,7 +683,7 @@ void displayIButtonWriteWaiting() {
 
 
 bool saveIButtonToSD() {
-  if (!SD.begin(SD_CLK)) {
+  if (!SD.begin(SD_CS, sdSPI)) {
     Serial.println(F("SD init failed"));
     return false;
   }
@@ -779,7 +780,7 @@ void handleIButtonSubmenu() {
         initIButtonWire();
         displayIButtonReadWaiting();
       } else if (iButtonMenuIndex == 1) {
-        if (!SD.begin(SD_CLK)) {
+        if (!SD.begin(SD_CS, sdSPI)) {
           display.clearDisplay();
           display.setTextSize(1);
           display.setCursor(1, 1);

@@ -227,7 +227,7 @@ void setup() {
 
   sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
   sdSPI.setFrequency(4000000);
-  if (!SD.begin(-1, sdSPI)) {
+  if (!SD.begin(SD_CS, sdSPI)) {
     display.clearDisplay();
     display.drawBitmap(72, 16, image_DolphinCommon_bits, 56, 48, 1);
     display.drawBitmap(25, 28, image_MicroSD_bits, 32, 28, 1);
