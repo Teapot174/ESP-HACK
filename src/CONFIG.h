@@ -23,11 +23,11 @@
 #define SD_MOSI 23
 #define SD_CLK 18
 #define SD_MISO 19
-#define SD_CS 2
+#define SD_CS 5
 
 // CC1101
 #define CC1101_GDO0 4
-#define CC1101_CS 5
+#define CC1101_CS 15
 #define CC1101_SCK 18
 #define CC1101_MOSI 23
 #define CC1101_MISO 19
@@ -37,7 +37,7 @@
 #define IR_RECIVER 14
 
 // GPIO
-#define GPIO_A 15
+#define GPIO_A 2
 #define GPIO_B 25
 #define GPIO_C 17
 #define GPIO_D 16
