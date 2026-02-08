@@ -37,7 +37,7 @@
 #define IR_RECIVER 14
 
 // GPIO
-#define GPIO_A 35
+#define GPIO_A 15
 #define GPIO_B 25
 #define GPIO_C 17
 #define GPIO_D 16
