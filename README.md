@@ -105,7 +105,7 @@ Thanks Dripside!
 
 ### 🔌 Connection scheme
 
-| Module | Pin
+| Module | Pin | Pin | Pin | Pin | Pin | Pin | Pin |
 |--------|-------|-------|-------|-------|-------|-------|-------|
 | **📺 Display** | VCC → 3V3 | GND → GND | SCL → G22 | SDA → G21 | - | - | - |
 | **🔘 Buttons** | UP → G27 | DOWN → G26 | OK → G33 | BACK → G32 | - | - | - |
