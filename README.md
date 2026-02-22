@@ -104,7 +104,7 @@ Thanks Dripside!
 ---
 
 ### 🔌 Connection scheme
-![ESP-HACK_Scheme](others/Pictures/Scheme.jpg)
+![ESP-HACK_Scheme](others/Pictures/Scheme.png)
 
 | Module | Pin | Pin | Pin | Pin | Pin | Pin | Pin |
 |--------|-------|-------|-------|-------|-------|-------|-------|
