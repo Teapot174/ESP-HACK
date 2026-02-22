@@ -123,8 +123,8 @@ During operation ESP-HACK may show the following errors:
 
 | Error code | ❌ Problem | 🛠️ Possible fix |
 |------------|-----------|------------------|
-| **0x000**  | SD-Card initialization failed | 🛠️ Format the SD card as **FAT32** or replace it. |
-| **0x001**  | CC1101 initialization failed | 🛠️ Check wiring and module functionality. |
+| **0x000**  | SD-Card initialization failed | 🛠️ Format the SD card as **FAT32** or replace it.      |
+| **0x001**  | CC1101 initialization failed | 🛠️ Check wiring and module functionality.               |
 | **0x002**  | NRF24 initialization failed | 🛠️ Verify chosen pins/connections and reboot the device. |
 
 ---
