@@ -104,6 +104,7 @@ Thanks Dripside!
 ---
 
 ### 🔌 Схема подключения
+![ESP-HACK_Scheme](others/Pictures/Scheme.png)
 
 | Module | Pin | Pin | Pin | Pin | Pin | Pin | Pin |
 |--------|-------|-------|-------|-------|-------|-------|-------|
