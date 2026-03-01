@@ -1,0 +1,21 @@
+Filetype: IR signals file
+Version: 1
+#
+name: POWER
+type: parsed
+protocol: Samsung32
+address: 07 00 00 00
+command: 02 00 00 00
+#
+name: Volume_UP
+type: parsed
+protocol: Samsung32
+address: 07 00 00 00
+command: 07 00 00 00
+#
+name: Volume_Down
+type: parsed
+protocol: Samsung32
+address: 07 00 00 00
+command: 0B 00 00 00
+#
