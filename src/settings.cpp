@@ -86,7 +86,7 @@ void renderAboutSetting() {
   display.print("ESP-HACK");
 
   display.setCursor(77, 24);
-  display.print("v0.6");
+  display.print(FIRMWARE);
 
   display.setTextSize(1);
   display.setCursor(5, 55);

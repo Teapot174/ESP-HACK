@@ -419,6 +419,7 @@ void handleBluetoothSubmenu() {
         if (gServer && gServer->getConnectedCount() > 0) {
           waitingForConnection = false;
           waitStartTime = 0;
+          delay(3000);
           execLogs.clear();
           bool ok = _bb_runDuckyScript(selectedFile.c_str(), execLogs, display);
           scriptRunning = false;

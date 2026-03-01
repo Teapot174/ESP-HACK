@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <RCSwitch.h>
+#include <math.h>
 
 // CC1101
 #define DEFAULT_RF_FREQUENCY 433.92 // MHz
@@ -12,8 +13,6 @@ float frequency = DEFAULT_RF_FREQUENCY;
 const float frequencies[] = {315.0, 433.92, 868.0, 915.0};
 const int numFrequencies = sizeof(frequencies) / sizeof(frequencies[0]);
 int freqIndex = 1; // Default 433.92 MHz
-int current_scan_index = 0;
-const int rssi_threshold = -85; // RSSI threshold
 
 // RCSwitch
 RCSwitch rcswitch = RCSwitch();
@@ -27,9 +26,7 @@ bool autoSave = false;
 int signals = 0;
 uint64_t lastSavedKey = 0;
 tpKeyData keyData1;
-float last_detected_frequency = 0.0;
 bool isJamming = false;
-unsigned long scanTimer = 0;
 
 // Bruteforce state
 const char* bruteTypes[] = {"Came", "Nice", "Ansonic", "Holtek", "Chamberlain"};
@@ -95,6 +92,67 @@ struct BruceConfigPins {
   } CC1101_bus;
 } bruceConfigPins;
 
+const float analyzerFreqs[] = {
+  300.0, 302.75, 303.0, 303.87, 303.90, 304.25,
+  307.0, 307.50, 307.80, 309.0, 310.0,
+  312.0, 312.1, 312.2, 313.0, 313.85, 314.0, 314.35, 314.98, 315.0,
+  318.0, 320.0, 320.15,
+  330.0, 345.0, 348.0, 350.0,
+  387.0, 390.0,
+  418.0,
+  430.0, 430.5, 431.0, 431.5,
+  433.22, 433.42, 433.65, 433.88, 433.92,
+  434.07, 434.17, 434.19, 434.39, 434.42, 434.62, 434.77,
+  438.90, 440.17,
+  462.75, 464.0, 467.75,
+  779.0,
+  868.35, 868.4, 868.46, 868.80, 868.95,
+  906.4
+};
+const int ANALYZER_FREQ_COUNT = sizeof(analyzerFreqs) / sizeof(analyzerFreqs[0]);
+const float ANALYZER_RSSI_LOW = -97.0f;
+const float ANALYZER_RSSI_HIGH = -40.0f;
+const float ANALYZER_RSSI_MUL = 2.3f;
+const float ANALYZER_DEFAULT_TRIG = -72.0f;
+const uint8_t ANALYZER_HIST_CNT = 4;
+const int ANALYZER_TRIG_STEP = 5;
+const uint16_t ANALYZER_STEP_DELAY_US = 3200;
+const float ANALYZER_RSSI_GRAPH_SCALE = 2.0f;
+const float ANALYZER_LOCK_MARGIN_DB = 6.0f;
+
+bool analyzerIsNoiseFreq(uint32_t freqHz) {
+  return
+    (freqHz >= 310500000UL && freqHz <= 312300000UL) ||
+    (freqHz >= 467500000UL && freqHz <= 468200000UL);
+}
+
+struct AnalyzerScanData {
+  float rough_rssi = -127.0f;
+  uint32_t rough_freq = 0;
+  float fine_rssi = -127.0f;
+  uint32_t fine_freq = 0;
+};
+
+struct AnalyzerState {
+  uint32_t curr_freq = 0;
+  uint32_t saved_freq = 0;
+  float rssi_now = 0.0f;
+  uint32_t hist_freq[ANALYZER_HIST_CNT] = {0};
+  uint8_t hist_count[ANALYZER_HIST_CNT] = {0};
+  bool has_signal = false;
+  float last_rssi = 0.0f;
+  float threshold = ANALYZER_DEFAULT_TRIG;
+};
+
+AnalyzerScanData analyzerScanResult;
+AnalyzerState analyzerState;
+float analyzerFilterVal = 0.0f;
+float analyzerTrigLevel = ANALYZER_DEFAULT_TRIG;
+uint8_t analyzerHoldCount = 0;
+bool analyzerLocked = false;
+unsigned long analyzerLastDraw = 0;
+bool analyzerExitRequested = false;
+
 void setupCC1101();
 void configureCC1101();
 void restoreReceiveMode();
@@ -109,7 +167,14 @@ void sendSynthKey(tpKeyData* kd);
 void stepFrequency(int step);
 void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat);
 void RCSwitch_RAW_send(int *ptrtransmittimings);
-void OLED_printAnalyzer(bool signalReceived = false, float detectedFreq = 0.0);
+void analyzerInit();
+uint32_t analyzerSmoothAvg(uint32_t newVal);
+uint32_t analyzerNearestFreq(uint32_t input);
+void analyzerAddHistory(uint32_t freq);
+void analyzerSaveFreq();
+void analyzerDoScan();
+void analyzerDrawGraph(uint8_t x, uint8_t y);
+void OLED_printAnalyzer();
 void OLED_printJammer();
 void startJamming();
 void stopJamming();
@@ -200,9 +265,8 @@ void runSubGHz() {
           menuState = menuAnalyzer;
           setupCC1101();
           rcswitch.disableReceive();
-          current_scan_index = 0;
-          last_detected_frequency = 0.0;
-          scanTimer = millis();
+          analyzerInit();
+          analyzerExitRequested = false;
           OLED_printAnalyzer();
         } else if (menuIndex == 3) {
           menuState = menuJammer;
@@ -395,26 +459,30 @@ void runSubGHz() {
         }
       }
     } else if (menuState == menuAnalyzer) {
-      if (buttonBack.isClick()) {
+      if (buttonBack.isClick() || analyzerExitRequested) {
+        analyzerExitRequested = false;
         menuState = menuMain;
         rcswitch.disableReceive();
         restoreReceiveMode();
         resetButtonStates();
         OLED_printSubGHzMenu(display, menuIndex);
-      } else if (millis() - scanTimer >= 250) {
-        float detectedFrequency = 0.0;
-        if (ELECHOUSE_cc1101.getRssi() >= rssi_threshold) {
-          detectedFrequency = frequencies[current_scan_index];
-          if (detectedFrequency != last_detected_frequency) {
-            last_detected_frequency = detectedFrequency;
-            OLED_printAnalyzer(true, last_detected_frequency);
-          }
+      } else {
+        if (buttonDown.isClick()) {
+          analyzerTrigLevel -= ANALYZER_TRIG_STEP;
+          if (analyzerTrigLevel < ANALYZER_RSSI_LOW) analyzerTrigLevel = ANALYZER_RSSI_LOW;
         }
-        current_scan_index = (current_scan_index + 1) % numFrequencies;
-        ELECHOUSE_cc1101.setMHZ(frequencies[current_scan_index]);
-        ELECHOUSE_cc1101.SetRx();
-        delayMicroseconds(3500);
-        scanTimer = millis();
+        if (buttonUp.isClick()) {
+          analyzerTrigLevel += ANALYZER_TRIG_STEP;
+          if (analyzerTrigLevel > ANALYZER_RSSI_HIGH) analyzerTrigLevel = ANALYZER_RSSI_HIGH;
+        }
+        if (buttonOK.isClick()) {
+          analyzerSaveFreq();
+        }
+        analyzerDoScan();
+        if (millis() - analyzerLastDraw >= 50) {
+          OLED_printAnalyzer();
+          analyzerLastDraw = millis();
+        }
       }
     } else if (menuState == menuJammer) {
       if (buttonUp.isClick()) {
@@ -1132,21 +1200,300 @@ void stepFrequency(int step) {
   frequency = frequencies[freqIndex];
 }
 
-void OLED_printAnalyzer(bool signalReceived, float detectedFreq) {
-  display.clearDisplay();
-  display.drawBitmap(0, 7, image_Dolphin_MHz_bits, 108, 57, SH110X_WHITE);
-  display.drawBitmap(100, 6, image_MHz_1_bits, 25, 11, SH110X_WHITE);
-  display.setTextColor(SH110X_WHITE);
-  display.setTextWrap(false);
-  display.setCursor(62, 10);
-  if (signalReceived || detectedFreq != 0.0) {
-    char freq_str[7];
-    snprintf(freq_str, sizeof(freq_str), "%06.2f", detectedFreq);
-    display.print(freq_str);
-  } else {
-    display.print("000.00");
+void analyzerInit() {
+  for (uint8_t i = 0; i < ANALYZER_HIST_CNT; i++) {
+    analyzerState.hist_freq[i] = 0;
+    analyzerState.hist_count[i] = 0;
   }
+  analyzerState.curr_freq = 0;
+  analyzerState.saved_freq = 0;
+  analyzerState.rssi_now = 0.0f;
+  analyzerState.last_rssi = 0.0f;
+  analyzerState.has_signal = false;
+  analyzerState.threshold = ANALYZER_DEFAULT_TRIG;
+  analyzerFilterVal = 0.0f;
+  analyzerTrigLevel = ANALYZER_DEFAULT_TRIG;
+  analyzerHoldCount = 0;
+  analyzerLocked = false;
+  analyzerLastDraw = 0;
+
+  ELECHOUSE_cc1101.SpiStrobe(0x36);
+  delayMicroseconds(200);
+  ELECHOUSE_cc1101.setRxBW(812.0);
+  ELECHOUSE_cc1101.SetRx();
+}
+
+uint32_t analyzerSmoothAvg(uint32_t newVal) {
+  float newFloat = (float)newVal;
+  float mix = (fabsf(newFloat - analyzerFilterVal) > 500000.0f) ? 0.9f : 0.03f;
+  analyzerFilterVal += (newFloat - analyzerFilterVal) * mix;
+  return (uint32_t)analyzerFilterVal;
+}
+
+uint32_t analyzerNearestFreq(uint32_t input) {
+  uint32_t prev = 0;
+  uint32_t out = 0;
+  for (int i = 0; i < ANALYZER_FREQ_COUNT; i++) {
+    uint32_t cur = (uint32_t)(analyzerFreqs[i] * 1000000.0f);
+    if (cur == 0) continue;
+    if (cur == input) return cur;
+    if (cur > input && prev < input) {
+      out = (cur - input < input - prev) ? cur : prev;
+      break;
+    }
+    prev = cur;
+  }
+  if (!out && prev) out = prev;
+  return out;
+}
+
+void analyzerAddHistory(uint32_t freq) {
+  uint32_t normFreq = analyzerNearestFreq(freq);
+  if (!normFreq) return;
+
+  bool found = false;
+  for (uint8_t i = 0; i < ANALYZER_HIST_CNT; i++) {
+    if (analyzerState.hist_freq[i] != normFreq) continue;
+    found = true;
+    if (analyzerState.hist_count[i] == 0) analyzerState.hist_count[i] = 1;
+    else analyzerState.hist_count[i]++;
+
+    if (i > 0) {
+      uint32_t f = analyzerState.hist_freq[i];
+      uint8_t c = analyzerState.hist_count[i];
+      for (int j = i; j > 0; j--) {
+        analyzerState.hist_freq[j] = analyzerState.hist_freq[j - 1];
+        analyzerState.hist_count[j] = analyzerState.hist_count[j - 1];
+      }
+      analyzerState.hist_freq[0] = f;
+      analyzerState.hist_count[0] = c;
+    }
+    break;
+  }
+
+  if (!found) {
+    for (int i = ANALYZER_HIST_CNT - 1; i > 0; i--) {
+      analyzerState.hist_freq[i] = analyzerState.hist_freq[i - 1];
+      analyzerState.hist_count[i] = analyzerState.hist_count[i - 1];
+    }
+    analyzerState.hist_freq[0] = normFreq;
+    analyzerState.hist_count[0] = 1;
+  }
+}
+
+void analyzerSaveFreq() {
+  if (!analyzerState.curr_freq) return;
+  uint32_t saveFreq = analyzerNearestFreq(analyzerState.curr_freq);
+  if (saveFreq && saveFreq != analyzerState.saved_freq) {
+    analyzerState.saved_freq = saveFreq;
+  }
+}
+
+void analyzerDoScan() {
+  bool hadSignal = analyzerState.has_signal;
+  uint32_t prevFreq = analyzerState.curr_freq;
+  analyzerScanResult.rough_rssi = -127.0f;
+  analyzerScanResult.fine_rssi = -127.0f;
+
+  ELECHOUSE_cc1101.SpiStrobe(0x36);
+  ELECHOUSE_cc1101.setRxBW(812.0);
+
+  for (int i = 0; i < ANALYZER_FREQ_COUNT; i++) {
+    buttonBack.tick();
+    if (buttonBack.isClick()) {
+      analyzerExitRequested = true;
+      return;
+    }
+
+    uint32_t freqHz = (uint32_t)(analyzerFreqs[i] * 1000000.0f);
+    if (freqHz == 462750000 || freqHz == 467750000 || freqHz == 464000000 || freqHz > 920000000) {
+      continue;
+    }
+    if (analyzerIsNoiseFreq(freqHz)) {
+      continue;
+    }
+
+    ELECHOUSE_cc1101.setMHZ(analyzerFreqs[i]);
+    ELECHOUSE_cc1101.SetRx();
+    delayMicroseconds(ANALYZER_STEP_DELAY_US);
+
+    float rssi = ELECHOUSE_cc1101.getRssi();
+    if (analyzerScanResult.rough_rssi < rssi) {
+      analyzerScanResult.rough_rssi = rssi;
+      analyzerScanResult.rough_freq = freqHz;
+    }
+  }
+
+  if (analyzerScanResult.rough_rssi > analyzerTrigLevel && analyzerScanResult.rough_freq > 300000) {
+    ELECHOUSE_cc1101.SpiStrobe(0x36);
+    ELECHOUSE_cc1101.setRxBW(58.0);
+    for (uint32_t freqHz = analyzerScanResult.rough_freq - 300000;
+         freqHz < analyzerScanResult.rough_freq + 300000;
+         freqHz += 20000) {
+      buttonBack.tick();
+      if (buttonBack.isClick()) {
+        analyzerExitRequested = true;
+        return;
+      }
+      if (analyzerIsNoiseFreq(freqHz)) {
+        continue;
+      }
+      float freqMHz = freqHz / 1000000.0f;
+      ELECHOUSE_cc1101.setMHZ(freqMHz);
+      ELECHOUSE_cc1101.SetRx();
+      delayMicroseconds(ANALYZER_STEP_DELAY_US);
+
+      float rssi = ELECHOUSE_cc1101.getRssi();
+      if (analyzerScanResult.fine_rssi < rssi) {
+        analyzerScanResult.fine_rssi = rssi;
+        analyzerScanResult.fine_freq = freqHz;
+      }
+    }
+  }
+
+  if (analyzerScanResult.fine_rssi > analyzerTrigLevel + ANALYZER_LOCK_MARGIN_DB &&
+      !analyzerIsNoiseFreq(analyzerScanResult.fine_freq)) {
+    analyzerHoldCount = 20;
+    if (analyzerFilterVal != 0.0f) {
+      analyzerScanResult.fine_freq = analyzerSmoothAvg(analyzerScanResult.fine_freq);
+    }
+    analyzerLocked = true;
+    analyzerState.curr_freq = analyzerScanResult.fine_freq;
+    analyzerState.rssi_now = analyzerScanResult.fine_rssi;
+    analyzerState.last_rssi = analyzerScanResult.fine_rssi;
+    analyzerState.has_signal = true;
+  } else if (analyzerScanResult.rough_rssi > analyzerTrigLevel + ANALYZER_LOCK_MARGIN_DB &&
+             analyzerHoldCount < 10 &&
+             !analyzerIsNoiseFreq(analyzerScanResult.rough_freq)) {
+    analyzerHoldCount = 20;
+    if (analyzerFilterVal != 0.0f) {
+      analyzerScanResult.rough_freq = analyzerSmoothAvg(analyzerScanResult.rough_freq);
+    }
+    analyzerLocked = true;
+    analyzerState.curr_freq = analyzerScanResult.rough_freq;
+    analyzerState.rssi_now = analyzerScanResult.rough_rssi;
+    analyzerState.last_rssi = analyzerScanResult.rough_rssi;
+    analyzerState.has_signal = true;
+  } else {
+    analyzerLocked = false;
+    analyzerState.has_signal = false;
+    analyzerState.curr_freq = 0;
+    analyzerState.rssi_now = 0.0f;
+    analyzerState.last_rssi = 0.0f;
+    analyzerFilterVal = 0.0f;
+    if (analyzerHoldCount > 0) {
+      analyzerHoldCount--;
+    }
+  }
+
+  analyzerLocked = (analyzerState.rssi_now > analyzerTrigLevel);
+  analyzerState.threshold = analyzerTrigLevel;
+  if (analyzerState.has_signal) {
+    if (!hadSignal) {
+      analyzerAddHistory(analyzerState.curr_freq);
+    } else {
+      uint32_t diff = (analyzerState.curr_freq > prevFreq)
+        ? (analyzerState.curr_freq - prevFreq)
+        : (prevFreq - analyzerState.curr_freq);
+      if (diff >= 300000UL) {
+        analyzerAddHistory(analyzerState.curr_freq);
+      }
+    }
+  }
+}
+
+void OLED_printAnalyzer() {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+
+  display.setTextSize(2);
+  char buf[32];
+  if (analyzerState.has_signal && analyzerState.curr_freq > 0) {
+    display.fillRect(4, 0, 121, 20, SH110X_WHITE);
+    display.setTextColor(SH110X_BLACK);
+    snprintf(buf, sizeof(buf), "%03lu.%03lu",
+             analyzerState.curr_freq / 1000000UL % 1000UL,
+             analyzerState.curr_freq / 1000UL % 1000UL);
+  } else {
+    display.setTextColor(SH110X_WHITE);
+    snprintf(buf, sizeof(buf), "---.---");
+  }
+  display.setCursor(8, 3);
+  display.print(buf);
+
+  display.setTextColor(SH110X_WHITE);
+  display.setTextSize(1);
+  display.setCursor(96, 6);
+  display.print("MHz");
+
+  const uint8_t left = 2, right = 66, top = 28;
+  uint8_t line = 0;
+  for (uint8_t i = 0; i < ANALYZER_HIST_CNT; i++) {
+    uint8_t xpos = (i % 2 == 0) ? left : right;
+    uint8_t ypos = top + line * 9;
+    if (i % 2 == 1) line++;
+
+    display.setCursor(xpos, ypos);
+    if (analyzerState.hist_freq[i] > 0) {
+      snprintf(buf, sizeof(buf), "%03lu.%03lu",
+               analyzerState.hist_freq[i] / 1000000UL % 1000UL,
+               analyzerState.hist_freq[i] / 1000UL % 1000UL);
+      display.print(buf);
+    } else {
+      display.print("---.---");
+    }
+
+    display.setCursor(xpos + 41, ypos);
+    if (analyzerState.hist_count[i] > 0) {
+      snprintf(buf, sizeof(buf), "x%u", analyzerState.hist_count[i]);
+      display.print(buf);
+    } else {
+      display.print("MHz");
+    }
+  }
+
+  display.setCursor(2, 55);
+  display.print("RSSI");
+  analyzerDrawGraph(26, 57);
   display.display();
+}
+
+void analyzerDrawGraph(uint8_t x, uint8_t y) {
+  const uint8_t width = 95;
+
+  if (analyzerState.rssi_now != 0.0f) {
+    float rssi = analyzerState.rssi_now;
+    if (rssi > ANALYZER_RSSI_HIGH) rssi = ANALYZER_RSSI_HIGH;
+    rssi = (rssi - ANALYZER_RSSI_LOW) / (ANALYZER_RSSI_MUL * ANALYZER_RSSI_GRAPH_SCALE);
+
+    uint8_t bars = 0;
+    for (size_t i = 0; i <= (uint8_t)rssi && (x + 2 * i) < (x + width); i++) {
+      if ((i + 1) % 4) {
+        bars++;
+        display.fillRect(x + 2 * i, (y + 4) - bars, 2, bars, SH110X_WHITE);
+      }
+    }
+  }
+
+  if (analyzerState.last_rssi != 0.0f) {
+    float last = analyzerState.last_rssi;
+    if (last > ANALYZER_RSSI_HIGH) last = ANALYZER_RSSI_HIGH;
+    int lastX = (int)((last - ANALYZER_RSSI_LOW) / ANALYZER_RSSI_MUL) * 2;
+    if (lastX < width) {
+      int lastH = (int)((last - ANALYZER_RSSI_LOW) / (ANALYZER_RSSI_MUL * ANALYZER_RSSI_GRAPH_SCALE)) + 1;
+      lastH -= (lastH / 4) + 3;
+      display.drawLine(x + lastX + 1, y - lastH, x + lastX + 1, y + 3, SH110X_WHITE);
+    }
+  }
+
+  float trigPos = (analyzerTrigLevel - ANALYZER_RSSI_LOW) / ANALYZER_RSSI_MUL;
+  uint8_t trigX = (uint8_t)((float)x + (2 * trigPos));
+  if (trigX < x + width) {
+    display.drawPixel(trigX, y + 4, SH110X_WHITE);
+    display.drawLine(trigX - 1, y + 5, trigX + 1, y + 5, SH110X_WHITE);
+  }
+
+  display.drawLine(x, y + 3, x + width, y + 3, SH110X_WHITE);
 }
 
 void OLED_printJammer() {

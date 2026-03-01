@@ -60,14 +60,15 @@ unsigned long lastActivityTime = 0;
 byte standbyTimeoutIndex = 2;
 unsigned long standbyTimeoutMs = standbyTimeoutOptionsMs[standbyTimeoutIndex];
 bool inStandby = false;
+unsigned long standbyIgnoreUntilMs = 0;
 
-int dvd_x = 0;
-int dvd_y = 0;
-int dvd_dx = 1;
-int dvd_dy = 1;
-const int DVD_SPEED = 2;
-const int DVD_LOGO_WIDTH = 32;
-const int DVD_LOGO_HEIGHT = 24;
+int standby_x = 0;
+int standby_y = 0;
+int standby_dx = 1;
+int standby_dy = 1;
+const int standby_SPEED = 2;
+const int standby_LOGO_WIDTH = 22;
+const int standby_LOGO_HEIGHT = 35;
 
 void applyColorScheme() {
   display.invertDisplay(colorSelectionIndex == 0);
@@ -132,6 +133,7 @@ void resetActivityTimer() {
   lastActivityTime = millis();
   if (inStandby) {
     inStandby = false;
+    standbyIgnoreUntilMs = millis() + 250;
     if (inMenu) {
       OLED_printMenu(display, currentMenu);
     }
@@ -140,24 +142,24 @@ void resetActivityTimer() {
 
 void enterStandby() {
   inStandby = true;
-  dvd_x = random(0, display.width() - DVD_LOGO_WIDTH + 1);
-  dvd_y = random(0, display.height() - DVD_LOGO_HEIGHT + 1);
-  dvd_dx = 1;
-  dvd_dy = 1;
+  standby_x = random(0, display.width() - standby_LOGO_WIDTH + 1);
+  standby_y = random(0, display.height() - standby_LOGO_HEIGHT + 1);
+  standby_dx = 1;
+  standby_dy = 1;
 }
 
 void drawStandbyAnimation() {
   display.clearDisplay();
-  display.drawBitmap(dvd_x, dvd_y, bitmap_dvd_logo, DVD_LOGO_WIDTH, DVD_LOGO_HEIGHT, SH110X_WHITE);
-  dvd_x += dvd_dx * DVD_SPEED;
-  dvd_y += dvd_dy * DVD_SPEED;
-  if (dvd_x <= 0 || dvd_x + DVD_LOGO_WIDTH >= display.width()) {
-    dvd_dx = -dvd_dx;
-    dvd_x = (dvd_x <= 0) ? 0 : display.width() - DVD_LOGO_WIDTH;
+  display.drawBitmap(standby_x, standby_y, bitmap_Standby_logo, standby_LOGO_WIDTH, standby_LOGO_HEIGHT, SH110X_WHITE);
+  standby_x += standby_dx * standby_SPEED;
+  standby_y += standby_dy * standby_SPEED;
+  if (standby_x <= 0 || standby_x + standby_LOGO_WIDTH >= display.width()) {
+    standby_dx = -standby_dx;
+    standby_x = (standby_x <= 0) ? 0 : display.width() - standby_LOGO_WIDTH;
   }
-  if (dvd_y <= 0 || dvd_y + DVD_LOGO_HEIGHT >= display.height()) {
-    dvd_dy = -dvd_dy;
-    dvd_y = (dvd_y <= 0) ? 0 : display.height() - DVD_LOGO_HEIGHT;
+  if (standby_y <= 0 || standby_y + standby_LOGO_HEIGHT >= display.height()) {
+    standby_dy = -standby_dy;
+    standby_y = (standby_y <= 0) ? 0 : display.height() - standby_LOGO_HEIGHT;
   }
   display.display();
 }
@@ -285,6 +287,14 @@ void loop() {
   }
 
   if (inMenu && manageStandby(anyPress)) return;
+
+  if (millis() < standbyIgnoreUntilMs) {
+    buttonUp.isClick();
+    buttonDown.isClick();
+    buttonOK.isClick();
+    buttonBack.isClick();
+    return;
+  }
 
   if (inMenu) {
     bool upClick = buttonUp.isClick();

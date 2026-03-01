@@ -307,6 +307,29 @@ void displayWardrivingPrompt() {
   display.display();
 }
 
+const char* getAuthModeString(wifi_auth_mode_t authMode) {
+  switch (authMode) {
+    case WIFI_AUTH_OPEN: return "Open";
+    case WIFI_AUTH_WEP: return "WEP";
+    case WIFI_AUTH_WPA_PSK: return "WPA";
+    case WIFI_AUTH_WPA2_PSK: return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+#ifdef WIFI_AUTH_WPA2_ENTERPRISE
+    case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-ENT";
+#endif
+#ifdef WIFI_AUTH_WPA3_PSK
+    case WIFI_AUTH_WPA3_PSK: return "WPA3";
+#endif
+#ifdef WIFI_AUTH_WPA2_WPA3_PSK
+    case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
+#endif
+#ifdef WIFI_AUTH_WAPI_PSK
+    case WIFI_AUTH_WAPI_PSK: return "WAPI";
+#endif
+    default: return "Other";
+  }
+}
+
 void displayWardrivingActive() {
   display.clearDisplay();
   display.setTextSize(1);
@@ -328,10 +351,7 @@ void displayWardrivingActive() {
     display.println(bssidStr);
     display.setCursor(2, display.getCursorY());
     display.print(F("Enc: "));
-    display.println(apRecords[0].authmode == WIFI_AUTH_OPEN ? F("Open") : 
-                   apRecords[0].authmode == WIFI_AUTH_WEP ? F("WEP") : 
-                   apRecords[0].authmode == WIFI_AUTH_WPA_PSK ? F("WPA") : 
-                   apRecords[0].authmode == WIFI_AUTH_WPA2_PSK ? F("WPA2") : F("Other"));
+    display.println(getAuthModeString(apRecords[0].authmode));
     display.setCursor(2, display.getCursorY());
     display.print(F("RSSI: "));
     display.println(apRecords[0].rssi);
@@ -641,6 +661,13 @@ void startWardriving() {
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_max_tx_power(82);
 
+  if (!SD.exists("/WiFi/Wardriving")) {
+    SD.mkdir("/WiFi/Wardriving");
+  }
+  while (SD.exists(getCurrentWardrivingFileName())) {
+    wardrivingFileNumber++;
+  }
+
   String fileName = getCurrentWardrivingFileName();
   wardrivingFile = SD.open(fileName, FILE_WRITE);
   if (wardrivingFile) {
@@ -663,7 +690,6 @@ void finishWardriving() {
   WiFi.scanDelete();
   WiFi.mode(WIFI_OFF);
   isWardriving = false;
-  wardrivingFileNumber++;
   foundNetworks = 0;
 }
 
@@ -694,10 +720,22 @@ void scanNetworks() {
               memcpy(&bssidList[0], record->bssid, 6);
               foundNetworks = min(foundNetworks + 1, 10);
 
+              char bssidStr[18];
+              snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                       record->bssid[0], record->bssid[1], record->bssid[2],
+                       record->bssid[3], record->bssid[4], record->bssid[5]);
+
               wardrivingFile.print(foundNetworks);
               wardrivingFile.print(F(". "));
               wardrivingFile.println(ssid);
+              wardrivingFile.print(F("MAC: "));
+              wardrivingFile.println(bssidStr);
+              wardrivingFile.print(F("Enc: "));
+              wardrivingFile.println(getAuthModeString(record->authmode));
+              wardrivingFile.print(F("RSSI: "));
               wardrivingFile.println(record->rssi);
+              wardrivingFile.println();
+              wardrivingFile.flush();
             }
           }
         }
