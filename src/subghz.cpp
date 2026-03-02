@@ -111,9 +111,9 @@ const float analyzerFreqs[] = {
 };
 const int ANALYZER_FREQ_COUNT = sizeof(analyzerFreqs) / sizeof(analyzerFreqs[0]);
 const float ANALYZER_RSSI_LOW = -97.0f;
-const float ANALYZER_RSSI_HIGH = -40.0f;
+const float ANALYZER_RSSI_HIGH = -30.0f;
 const float ANALYZER_RSSI_MUL = 2.3f;
-const float ANALYZER_DEFAULT_TRIG = -72.0f;
+const float ANALYZER_DEFAULT_TRIG = -75.0f;
 const uint8_t ANALYZER_HIST_CNT = 4;
 const int ANALYZER_TRIG_STEP = 5;
 const uint16_t ANALYZER_STEP_DELAY_US = 3200;
