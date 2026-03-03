@@ -45,8 +45,8 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 ### Infrared
 
-- IR-Send  
-- IR-Read  
+- Send  
+- Read  
 - TV, PJ, AC OFF
 
 ### GPIO
