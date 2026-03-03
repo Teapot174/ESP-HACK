@@ -37,6 +37,7 @@ IOS, Android, Windows
 
 - SubRead  
 - SubSend
+- RAW (Запись/Отправка)
 - Analyzer
 - Bruteforce:
 Came, Nice, Ansonic, Holtek, Chamberlain
