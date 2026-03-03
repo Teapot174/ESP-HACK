@@ -311,8 +311,8 @@ static const unsigned char PROGMEM image_DolphinWait_bits[] = {
 };
 
 
-#define SUBGHZ_MENU_ITEM_COUNT 5
-static const char* subghzMenuItems[] = {"SubRead", "SubSend", "Analyzer", "Jammer", "Brute"};
+#define SUBGHZ_MENU_ITEM_COUNT 6
+static const char* subghzMenuItems[] = {"Read", "Send", "Analyzer", "Jammer", "Brute", "RAW"};
 
 inline void OLED_printSubGHzMenu(DisplayType &display, byte menuIndex) {
   display.clearDisplay();

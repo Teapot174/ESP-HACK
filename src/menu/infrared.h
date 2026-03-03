@@ -5,7 +5,7 @@
 #include "CONFIG.h"
 
 #define IR_MENU_ITEM_COUNT 5
-static const char* irMenuItems[] = {"IR-Send", "IR-Read", "PJ-OFF", "AC-OFF", "TV-OFF"};
+static const char* irMenuItems[] = {"Send", "Read", "PJ-OFF", "AC-OFF", "TV-OFF"};
 
 static const unsigned char PROGMEM image_Power_bits[] = {
   0x0f,0xff,0xff,0xff,0xc0,0x0f,0xff,0xff,0xff,0xc0,0x30,0x00,0x00,0x00,0x30,0x30,

@@ -230,19 +230,21 @@ void executeSpam(EBLEPayloadType type) {
     uint8_t macAddr[6];
     generateRandomMac(macAddr);
     esp_base_mac_addr_set(macAddr);
-    BLEDevice::init("ESP-HACK");
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, MAX_TX_POWER);
+
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    if (!pAdvertising) {
+        return;
+    }
+
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, MAX_TX_POWER);
     BLEAdvertisementData advertisementData = GetUniversalAdvertisementData(type);
     BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
-    NimBLEUUID uuid((uint32_t)(random() & 0xFFFFFF));
-    pAdvertising->addServiceUUID(uuid);
+
+    if (pAdvertising->isAdvertising()) {
+        pAdvertising->stop();
+    }
+
     pAdvertising->setAdvertisementData(advertisementData);
     pAdvertising->setScanResponseData(oScanResponseData);
     pAdvertising->start();
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-    pAdvertising->stop();
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    BLEDevice::deinit();
 }

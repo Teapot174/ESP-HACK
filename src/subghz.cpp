@@ -152,6 +152,23 @@ uint8_t analyzerHoldCount = 0;
 bool analyzerLocked = false;
 unsigned long analyzerLastDraw = 0;
 bool analyzerExitRequested = false;
+const float RAW_REC_DEFAULT_RSSI = -90.0f; // RAW FILTER
+const unsigned long RAW_REC_FRAME_GAP_US = 7000;
+const int RAW_REC_MIN_EDGES = 20;
+const int RAW_REC_MAX_EDGES = 900;
+bool rawRecorderRunning = false;
+float rawRecorderRssiThreshold = RAW_REC_DEFAULT_RSSI;
+float rawRecorderLastRssi = -127.0f;
+uint16_t rawRecorderSavedCount = 0;
+unsigned long rawRecorderLastDraw = 0;
+String rawRecorderLastFile = "";
+String rawRecorderSessionFile = "";
+String loadedRawData = "";
+int rawRecorderEdges[RAW_REC_MAX_EDGES];
+int rawRecorderEdgeCount = 0;
+int rawRecorderPrevLevel = LOW;
+unsigned long rawRecorderPrevEdgeUs = 0;
+unsigned long rawRecorderLastEdgeUs = 0;
 
 void setupCC1101();
 void configureCC1101();
@@ -159,9 +176,15 @@ void restoreReceiveMode();
 void read_rcswitch(tpKeyData* kd);
 void read_raw(tpKeyData* kd);
 void OLED_printWaitingSignal();
+void OLED_printRawRecorder();
 void OLED_printKey(tpKeyData* kd, String fileName = "", bool isSending = false);
 void OLED_printError(String st, bool err = true);
 bool saveKeyToSD(tpKeyData* kd);
+bool startRawRecorderSession();
+void stopRawRecorderSession(bool flushPending = true, bool discardFile = false);
+bool saveRawFrameToSession(const String& rawData, float rssi);
+void flushRawRecorderFrame();
+void handleRawRecorderCapture();
 bool loadKeyFromSD(String fileName, tpKeyData* kd);
 void sendSynthKey(tpKeyData* kd);
 void stepFrequency(int step);
@@ -276,6 +299,20 @@ void runSubGHz() {
           menuState = menuBruteforce;
           bruteRunning = false;
           OLED_printBruteIntro();
+        } else if (menuIndex == 5) {
+          menuState = menuRawRecorder;
+          setupCC1101();
+          rawRecorderRunning = false;
+          rawRecorderSavedCount = 0;
+          rawRecorderLastRssi = -127.0f;
+          rawRecorderLastFile = "";
+          rawRecorderSessionFile = "";
+          rawRecorderEdgeCount = 0;
+          rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+          rawRecorderPrevEdgeUs = micros();
+          rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
+          rawRecorderLastDraw = 0;
+          OLED_printRawRecorder();
         }
       }
       if (buttonBack.isClick()) {
@@ -334,6 +371,56 @@ void runSubGHz() {
           } else {
             Serial.println(F("Auto-save failed"));
           }
+        }
+      }
+    } else if (menuState == menuRawRecorder) {
+      if (buttonUp.isClick()) {
+        stepFrequency(1);
+        setupCC1101();
+        rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+        rawRecorderPrevEdgeUs = micros();
+        rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
+        rawRecorderEdgeCount = 0;
+        OLED_printRawRecorder();
+      }
+      if (buttonDown.isClick()) {
+        stepFrequency(-1);
+        setupCC1101();
+        rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+        rawRecorderPrevEdgeUs = micros();
+        rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
+        rawRecorderEdgeCount = 0;
+        OLED_printRawRecorder();
+      }
+      if (buttonOK.isClick()) {
+        if (!rawRecorderRunning) {
+          if (startRawRecorderSession()) {
+            rawRecorderRunning = true;
+          } else {
+            OLED_printError(F("RAW file open fail"), true);
+            delay(700);
+          }
+        } else {
+          stopRawRecorderSession(true, false);
+          rawRecorderRunning = false;
+          rawRecorderSavedCount = 0;
+        }
+        rawRecorderLastDraw = 0;
+        OLED_printRawRecorder();
+      }
+      if (buttonBack.isClick()) {
+        if (rawRecorderRunning) {
+          stopRawRecorderSession(false, true);
+          rawRecorderRunning = false;
+        }
+        menuState = menuMain;
+        resetButtonStates();
+        OLED_printSubGHzMenu(display, menuIndex);
+      } else if (rawRecorderRunning) {
+        handleRawRecorderCapture();
+        if (millis() - rawRecorderLastDraw >= 120) {
+          OLED_printRawRecorder();
+          rawRecorderLastDraw = millis();
         }
       }
     } else if (menuState == menuTransmit && subExplorer.inExplorer) {
@@ -531,6 +618,10 @@ void runSubGHz() {
   if (bruteRfActive) {
     bruteStopTx();
   }
+  if (rawRecorderRunning || rawRecorderSessionFile.length() > 0) {
+    stopRawRecorderSession(false, true);
+    rawRecorderRunning = false;
+  }
   restoreReceiveMode();
 }
 
@@ -673,6 +764,20 @@ void OLED_printWaitingSignal() {
   display.display();
 }
 
+void OLED_printRawRecorder() {
+  display.clearDisplay();
+  display.drawBitmap(0, 4, image_DolphinReceive_bits, 97, 61, SH110X_WHITE);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(72, 13);
+  display.print(String(frequency, 2) + "MHz");
+  display.setCursor(65, 37);
+  display.println(rawRecorderRunning ? F("Record...") : F("Press OK."));
+  display.setCursor(65, 46);
+  display.println(String(F("Frames:")) + String(rawRecorderSavedCount));
+  display.display();
+}
+
 void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -687,13 +792,17 @@ void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
     display.print("Signal:");
   }
   String st = "";
-  bool leadingZero = true;
-  for (int i = 0; i < 8; i++) {
-    if (kd->keyID[i] != 0 || !leadingZero || i == 7) {
-      leadingZero = false;
-      if (kd->keyID[i] < 0x10) st += "0";
-      st += String(kd->keyID[i], HEX);
-      if (i < 7) st += ":";
+  if (kd->type == kLINEAR) {
+    st = "Unknown";
+  } else {
+    bool leadingZero = true;
+    for (int i = 0; i < 8; i++) {
+      if (kd->keyID[i] != 0 || !leadingZero || i == 7) {
+        leadingZero = false;
+        if (kd->keyID[i] < 0x10) st += "0";
+        st += String(kd->keyID[i], HEX);
+        if (i < 7) st += ":";
+      }
     }
   }
   display.setCursor(1, 12);
@@ -731,6 +840,124 @@ void OLED_printError(String st, bool err) {
 static void ensureSubExplorerDir() {
   if (subExplorer.currentDir.length() == 0) {
     subExplorer.currentDir = subExplorerCfg.rootDir;
+  }
+}
+
+bool startRawRecorderSession() {
+  ensureSubExplorerDir();
+
+  int fileNum = 1;
+  String fileName;
+  while (fileNum <= 999) {
+    fileName = subExplorer.currentDir + "/RAW_" + String(fileNum) + ".sub";
+    if (!SD.exists(fileName)) break;
+    fileNum++;
+  }
+  if (fileNum > 999) {
+    Serial.println(F("No free RAW_*.sub slots"));
+    return false;
+  }
+
+  File file = SD.open(fileName, FILE_WRITE);
+  if (!file) return false;
+
+  file.println(F("Filetype: Flipper SubGhz RAW File"));
+  file.println(F("Version: 1"));
+  file.print(F("Frequency: "));
+  file.println((unsigned long)(frequency * 1000000));
+  file.println(F("Preset: FuriHalSubGhzPresetOok650Async"));
+  file.println(F("Protocol: RAW"));
+  file.close();
+
+  rawRecorderSessionFile = fileName;
+  int lastSlash = fileName.lastIndexOf('/');
+  rawRecorderLastFile = (lastSlash >= 0) ? fileName.substring(lastSlash + 1) : fileName;
+  rawRecorderEdgeCount = 0;
+  pinMode(CC1101_GDO0, INPUT);
+  rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+  rawRecorderPrevEdgeUs = micros();
+  rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
+  Serial.print(F("RAW session started: "));
+  Serial.println(fileName);
+  return true;
+}
+
+bool saveRawFrameToSession(const String& rawData, float rssi) {
+  (void)rssi;
+  if (rawRecorderSessionFile.length() == 0 || rawData.length() == 0) {
+    return false;
+  }
+
+  File file = SD.open(rawRecorderSessionFile, FILE_APPEND);
+  if (!file) return false;
+  file.print(F("RAW_Data: "));
+  file.println(rawData);
+  file.close();
+  return true;
+}
+
+void flushRawRecorderFrame() {
+  if (rawRecorderEdgeCount < RAW_REC_MIN_EDGES) {
+    rawRecorderEdgeCount = 0;
+    return;
+  }
+
+  rawRecorderLastRssi = ELECHOUSE_cc1101.getRssi();
+  if (rawRecorderLastRssi < rawRecorderRssiThreshold) {
+    rawRecorderEdgeCount = 0;
+    return;
+  }
+
+  String data = "";
+  for (int i = 0; i < rawRecorderEdgeCount; i++) {
+    if (i > 0) data += " ";
+    data += String(rawRecorderEdges[i]);
+  }
+
+  if (saveRawFrameToSession(data, rawRecorderLastRssi)) {
+    rawRecorderSavedCount++;
+  }
+  rawRecorderEdgeCount = 0;
+}
+
+void stopRawRecorderSession(bool flushPending, bool discardFile) {
+  String fileToDiscard = rawRecorderSessionFile;
+  if (flushPending) {
+    flushRawRecorderFrame();
+  } else {
+    rawRecorderEdgeCount = 0;
+  }
+  rawRecorderSessionFile = "";
+  if (discardFile && fileToDiscard.length() > 0 && SD.exists(fileToDiscard)) {
+    SD.remove(fileToDiscard);
+  }
+}
+
+void handleRawRecorderCapture() {
+  unsigned long nowUs = micros();
+  int level = digitalRead(CC1101_GDO0);
+
+  if (level != rawRecorderPrevLevel) {
+    unsigned long durUs = nowUs - rawRecorderPrevEdgeUs;
+    rawRecorderPrevEdgeUs = nowUs;
+    rawRecorderLastEdgeUs = nowUs;
+
+    if (durUs >= 40 && durUs <= 60000 && rawRecorderEdgeCount < RAW_REC_MAX_EDGES) {
+      int signedDur = rawRecorderPrevLevel ? (int)durUs : -(int)durUs;
+      rawRecorderEdges[rawRecorderEdgeCount++] = signedDur;
+    } else if (durUs > 60000 && rawRecorderEdgeCount >= RAW_REC_MIN_EDGES) {
+      flushRawRecorderFrame();
+    } else if (rawRecorderEdgeCount >= RAW_REC_MAX_EDGES) {
+      flushRawRecorderFrame();
+    }
+
+    rawRecorderPrevLevel = level;
+  }
+
+  if (rawRecorderEdgeCount >= RAW_REC_MIN_EDGES && (nowUs - rawRecorderLastEdgeUs) > RAW_REC_FRAME_GAP_US) {
+    flushRawRecorderFrame();
+    rawRecorderPrevEdgeUs = nowUs;
+    rawRecorderLastEdgeUs = nowUs;
   }
 }
 
@@ -823,15 +1050,20 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
     return false;
   }
   memset(kd, 0, sizeof(tpKeyData));
+  loadedRawData = "";
   String line;
   while (file.available()) {
     line = file.readStringUntil('\n');
     line.trim();
-    if (line.startsWith("Filetype:") && !line.equals("Filetype: Flipper SubGhz Key File")) {
-      file.close();
-      Serial.print(F("Invalid file format: "));
-      Serial.println(fileName);
-      return false;
+    if (line.startsWith("Filetype:")) {
+      bool isKeyFile = line.equals("Filetype: Flipper SubGhz Key File");
+      bool isRawFile = line.equals("Filetype: Flipper SubGhz RAW File");
+      if (!isKeyFile && !isRawFile) {
+        file.close();
+        Serial.print(F("Invalid file format: "));
+        Serial.println(fileName);
+        return false;
+      }
     } else if (line.startsWith("Frequency:")) {
       kd->frequency = line.substring(10).toFloat() / 1000000.0;
     } else if (line.startsWith("Protocol:")) {
@@ -844,6 +1076,7 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
       else if (protocol == "HOLTEK") kd->type = kHOLTEK;
       else if (protocol == "KeeLoq") kd->type = kKeeLoq;
       else if (protocol == "StarLine") kd->type = kStarLine;
+      else if (protocol == "RAW") kd->type = kLINEAR;
       else kd->type = kUnknown;
     } else if (line.startsWith("Bit:")) {
       kd->bitLength = line.substring(4).toInt();
@@ -858,6 +1091,17 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
       }
     } else if (line.startsWith("TE:")) {
       kd->te = line.substring(3).toInt();
+    } else if (line.startsWith("RAW_Data:")) {
+      String rawLine = line.substring(9);
+      rawLine.trim();
+      if (rawLine.length() > 0) {
+        if (loadedRawData.length() > 0) loadedRawData += "\n";
+        loadedRawData += rawLine;
+      }
+      strncpy(kd->rawData, rawLine.c_str(), sizeof(kd->rawData) - 1);
+      kd->rawData[sizeof(kd->rawData) - 1] = '\0';
+      kd->type = kLINEAR;
+      kd->codeLenth = 1;
     }
   }
   file.close();
@@ -999,6 +1243,34 @@ void bruteSendCode(uint16_t code) {
   digitalWrite(bruteTxPin, LOW);
 }
 
+static bool sendRawBlock(const String& block) {
+  String line = block;
+  line.trim();
+  if (line.length() == 0) return false;
+
+  int transmittimings[RAW_REC_MAX_EDGES + 1];
+  int count = 0;
+  int startIndex = 0;
+
+  while (startIndex < line.length() && count < RAW_REC_MAX_EDGES) {
+    while (startIndex < line.length() && line[startIndex] == ' ') startIndex++;
+    if (startIndex >= line.length()) break;
+    int index = line.indexOf(' ', startIndex);
+    if (index < 0) index = line.length();
+    String token = line.substring(startIndex, index);
+    token.trim();
+    if (token.length() > 0) {
+      transmittimings[count++] = token.toInt();
+    }
+    startIndex = index + 1;
+  }
+
+  if (count <= 0) return false;
+  transmittimings[count] = 0;
+  RCSwitch_RAW_send(transmittimings);
+  return true;
+}
+
 
 void sendSynthKey(tpKeyData* kd) {
   Serial.println(F("Starting transmission"));
@@ -1018,7 +1290,7 @@ void sendSynthKey(tpKeyData* kd) {
 
   uint32_t frequency = kd->frequency * 1000000;
   String protocol = getTypeName(kd->type);
-  String data = String(kd->rawData);
+  String data = (protocol == "RAW" && loadedRawData.length() > 0) ? loadedRawData : String(kd->rawData);
   uint64_t key = 0;
   for (int i = 0; i < 8; i++) {
     key |= ((uint64_t)kd->keyID[i] << ((7 - i) * 8));
@@ -1069,41 +1341,45 @@ void sendSynthKey(tpKeyData* kd) {
   bool transmissionSuccess = false;
 
   if (protocol == "RAW") {
-    int buff_size = 0;
-    int index = 0;
-    while (index >= 0) {
-      index = data.indexOf(' ', index + 1);
-      buff_size++;
-    }
-    int *transmittimings = (int *)calloc(sizeof(int), buff_size + 1);
-    if (!transmittimings) {
-      Serial.println(F("Memory allocation failed"));
-      OLED_printError(F("Memory error"), true);
-      delay(1000);
-      OLED_printKey(kd, subExplorer.selectedFile);
-      deinitRfModule();
-      return;
-    }
-
-    int startIndex = 0;
-    index = 0;
-    for (size_t i = 0; i < buff_size; i++) {
-      index = data.indexOf(' ', startIndex);
-      if (index == -1) {
-        transmittimings[i] = data.substring(startIndex).toInt();
-      } else {
-        transmittimings[i] = data.substring(startIndex, index).toInt();
-      }
-      startIndex = index + 1;
-    }
-    transmittimings[buff_size] = 0;
-
     display.setCursor(67, 54);
     display.print("Sending...");
     display.display();
-    RCSwitch_RAW_send(transmittimings);
-    free(transmittimings);
-    transmissionSuccess = true;
+
+    int sentBlocks = 0;
+
+    bool sentFromFile = false;
+    if (subExplorer.selectedFile.length() > 0) {
+      File rawFile = SD.open(subExplorer.currentDir + "/" + subExplorer.selectedFile, FILE_READ);
+      if (rawFile) {
+        while (rawFile.available()) {
+          String line = rawFile.readStringUntil('\n');
+          line.trim();
+          if (!line.startsWith("RAW_Data:")) continue;
+          String block = line.substring(9);
+          block.trim();
+          if (sendRawBlock(block)) {
+            sentBlocks++;
+            sentFromFile = true;
+          }
+        }
+        rawFile.close();
+      }
+    }
+
+    if (!sentFromFile) {
+      int lineStart = 0;
+      while (lineStart < data.length()) {
+        int lineEnd = data.indexOf('\n', lineStart);
+        if (lineEnd < 0) lineEnd = data.length();
+        String block = data.substring(lineStart, lineEnd);
+        lineStart = lineEnd + 1;
+        if (sendRawBlock(block)) {
+          sentBlocks++;
+        }
+      }
+    }
+
+    transmissionSuccess = (sentBlocks > 0);
   } else if (protocol == "RcSwitch") {
     data.replace(" ", "");
     uint64_t data_val = key;
@@ -1547,6 +1823,7 @@ String getTypeName(emKeys tp) {
     case kCAME: return F("CAME");
     case kNICE: return F("NICE");
     case kHOLTEK: return F("HOLTEK");
+    case kLINEAR: return F("RAW");
     default: return "";
   }
 }

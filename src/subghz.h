@@ -32,7 +32,7 @@ enum emKeys {
   kCHAMBERLAIN,
   kLINEAR
 };
-enum emMenuState { menuMain, menuReceive, menuTransmit, menuAnalyzer, menuJammer, menuBruteforce, menuBruteConfig, menuBruteRun };
+enum emMenuState { menuMain, menuReceive, menuRawRecorder, menuTransmit, menuAnalyzer, menuJammer, menuBruteforce, menuBruteConfig, menuBruteRun };
 
 struct tpKeyData {
   byte keyID[9];

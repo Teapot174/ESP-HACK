@@ -337,6 +337,9 @@ void displayBadKBScriptExec(DisplayType &display, const String& filename, const 
 enum BLESpamState { IDLE, READY, RUNNING };
 BLESpamState bleSpamState = IDLE;
 EBLEPayloadType currentSpamType;
+const byte BLE_SPAM_LOG_LINES = 5;
+String bleSpamLog[BLE_SPAM_LOG_LINES];
+byte bleSpamLogSize = 0;
 
 String generateRandomName() {
   const char* charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -348,6 +351,37 @@ String generateRandomName() {
   return randomName;
 }
 
+const char* getBLESpamHeaderName(const char* spamType) {
+  if (strcmp(spamType, "IOS-SPM") == 0) return "IOS-SPAM";
+  if (strcmp(spamType, "ANDR-SPM") == 0) return "ANDROID-SPAM";
+  if (strcmp(spamType, "WIN-SPM") == 0) return "WINDOWS-SPAM";
+  return spamType;
+}
+
+void clearBLESpamLog() {
+  bleSpamLogSize = 0;
+  for (byte i = 0; i < BLE_SPAM_LOG_LINES; i++) bleSpamLog[i] = "";
+}
+
+void appendBLESpamLine(const String &line) {
+  if (bleSpamLogSize < BLE_SPAM_LOG_LINES) {
+    bleSpamLog[bleSpamLogSize++] = line;
+  } else {
+    for (byte i = 1; i < BLE_SPAM_LOG_LINES; i++) {
+      bleSpamLog[i - 1] = bleSpamLog[i];
+    }
+    bleSpamLog[BLE_SPAM_LOG_LINES - 1] = line;
+  }
+}
+
+void pushBLESpamLog(const String &deviceName) {
+  if (deviceName.length() == 0) {
+    appendBLESpamLine("");
+    return;
+  }
+  appendBLESpamLine(deviceName);
+}
+
 void displayBLESpamHeader(const char* spamType, bool running) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -355,7 +389,7 @@ void displayBLESpamHeader(const char* spamType, bool running) {
   display.setTextWrap(false);
   display.setCursor(1, 1);
   if (running) {
-    display.println(String(spamType) + "...");
+    display.println(String(getBLESpamHeaderName(spamType)) + "...");
     display.println(F("---------------------"));
   } else {
     display.println(F("Press OK."));
@@ -364,17 +398,27 @@ void displayBLESpamHeader(const char* spamType, bool running) {
 }
 
 void displayBLESpamDevice(const char* deviceName) {
-  display.fillRect(0, 16, display.width(), 10, SH110X_BLACK);
-  display.setCursor(1, 16);
-  display.print(deviceName);
+  pushBLESpamLog(deviceName);
+  displayBLESpamHeader(bluetoothMenuItems[bluetoothMenuIndex], true);
+  int16_t startY = display.getCursorY();
+  for (byte i = 0; i < bleSpamLogSize; i++) {
+    display.setCursor(1, startY + i * 9);
+    display.println(bleSpamLog[i]);
+  }
   display.display();
 }
 
 void displayFullBLESpamScreen(const char* spamType, bool running, const char* deviceName = "") {
   displayBLESpamHeader(spamType, running);
   if (running) {
-    display.setCursor(1, 16);
-    display.print(deviceName);
+    if (strlen(deviceName) > 0) {
+      pushBLESpamLog(deviceName);
+    }
+    int16_t startY = display.getCursorY();
+    for (byte i = 0; i < bleSpamLogSize; i++) {
+      display.setCursor(1, startY + i * 9);
+      display.println(bleSpamLog[i]);
+    }
   }
   display.display();
 }
@@ -453,21 +497,8 @@ void handleBluetoothSubmenu() {
   } else {
     if (bleSpamState == IDLE) {
       displayBluetoothMenu(display, bluetoothMenuIndex);
-    } else {
-      static String currentDeviceName = "";
-      if (bleSpamState == READY) {
-        displayFullBLESpamScreen(bluetoothMenuItems[bluetoothMenuIndex], false);
-      } else {
-        static bool firstRun = true;
-        if (firstRun) {
-          displayFullBLESpamScreen(
-            bluetoothMenuItems[bluetoothMenuIndex],
-            true,
-            currentDeviceName.c_str()
-          );
-          firstRun = false;
-        }
-      }
+    } else if (bleSpamState == READY) {
+      displayFullBLESpamScreen(bluetoothMenuItems[bluetoothMenuIndex], false);
     }
   }
 
@@ -578,7 +609,6 @@ void handleBluetoothSubmenu() {
       static unsigned long lastSpamTime = 0;
       static int deviceIndex = 0;
       static String currentDeviceName = "";
-      static bool firstRun = true;
 
       if (buttonOK.isClick()) {
         if (bleSpamState == READY) {
@@ -586,12 +616,11 @@ void handleBluetoothSubmenu() {
           BLEDevice::init("ESP-HACK");
           lastSpamTime = 0;
           deviceIndex = 0;
-          firstRun = true;
+          clearBLESpamLog();
           Serial.println(F("[Bluetooth] Started BLE spam"));
         } else {
           bleSpamState = READY;
           BLEDevice::deinit();
-          firstRun = true;
           Serial.println(F("[Bluetooth] Stopped BLE spam"));
           displayFullBLESpamScreen(bluetoothMenuItems[bluetoothMenuIndex], false);
         }
@@ -602,7 +631,6 @@ void handleBluetoothSubmenu() {
           BLEDevice::deinit();
         }
         bleSpamState = IDLE;
-        firstRun = true;
         displayBluetoothMenu(display, bluetoothMenuIndex);
       }
 
@@ -623,17 +651,7 @@ void handleBluetoothSubmenu() {
           }
 
           executeSpam(currentSpamType);
-
-          if (firstRun) {
-            displayFullBLESpamScreen(
-              bluetoothMenuItems[bluetoothMenuIndex],
-              true,
-              currentDeviceName.c_str()
-            );
-            firstRun = false;
-          } else {
-            displayBLESpamDevice(currentDeviceName.c_str());
-          }
+          displayBLESpamDevice(currentDeviceName.c_str());
 
           deviceIndex++;
           lastSpamTime = millis();
