@@ -35,8 +35,8 @@ IOS, Android, Windows
 
 ### SubGHz
 
-- SubRead  
-- SubSend
+- Read  
+- Send
 - RAW (Record/Send)
 - Analyzer
 - Bruteforce:
