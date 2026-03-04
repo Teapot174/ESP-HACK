@@ -19,7 +19,7 @@
 #define BUTTON_OK 33    // OK
 #define BUTTON_BACK 32  // Back
 
-// SD-Card
+// SD Card
 #define SD_MOSI 15
 #define SD_CLK 2
 #define SD_MISO 0
