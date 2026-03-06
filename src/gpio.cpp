@@ -35,7 +35,7 @@ const unsigned long SPECTRUM_UPDATE_INTERVAL = 25; // 1000/25 ГЦ
 
 // NRF24 pins
 struct NRF24Config {
-  byte cePin = GPIO_B, csnPin = GPIO_C, mosiPin = GPIO_E, misoPin = GPIO_F, sckPin = GPIO_D;
+  byte cePin = GPIO_A, csnPin = GPIO_B, mosiPin = GPIO_C, misoPin = GPIO_D, sckPin = GPIO_E;
 } nrf24Config;
 
 // Pins
@@ -65,8 +65,8 @@ enum IButtonState {
 bool inIButtonSubmenu = false;
 IButtonState iButtonState = IBUTTON_MENU;
 byte iButtonMenuIndex = 0;
-byte iButtonPinIndex = 0; // default A
-byte iButtonPin = GPIO_A;
+byte iButtonPinIndex = 5; // default F
+byte iButtonPin = GPIO_F;
 OneWire* iButtonWire = nullptr;
 byte iButtonBuffer[8] = {0};
 byte iButtonType = 0x00;

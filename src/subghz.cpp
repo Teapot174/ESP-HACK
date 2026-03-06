@@ -374,7 +374,10 @@ void runSubGHz() {
         }
       }
     } else if (menuState == menuRawRecorder) {
-      if (buttonUp.isClick()) {
+      bool upClick = buttonUp.isClick();
+      bool downClick = buttonDown.isClick();
+
+      if (!rawRecorderRunning && upClick) {
         stepFrequency(1);
         setupCC1101();
         rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
@@ -383,7 +386,7 @@ void runSubGHz() {
         rawRecorderEdgeCount = 0;
         OLED_printRawRecorder();
       }
-      if (buttonDown.isClick()) {
+      if (!rawRecorderRunning && downClick) {
         stepFrequency(-1);
         setupCC1101();
         rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
@@ -410,12 +413,15 @@ void runSubGHz() {
       }
       if (buttonBack.isClick()) {
         if (rawRecorderRunning) {
-          stopRawRecorderSession(false, true);
+          stopRawRecorderSession(true, false);
           rawRecorderRunning = false;
+          rawRecorderLastDraw = 0;
+          OLED_printRawRecorder();
+        } else {
+          menuState = menuMain;
+          resetButtonStates();
+          OLED_printSubGHzMenu(display, menuIndex);
         }
-        menuState = menuMain;
-        resetButtonStates();
-        OLED_printSubGHzMenu(display, menuIndex);
       } else if (rawRecorderRunning) {
         handleRawRecorderCapture();
         if (millis() - rawRecorderLastDraw >= 120) {
