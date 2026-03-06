@@ -112,9 +112,9 @@ Thanks Dripside!
 | **📺 Display** | VCC → 3V3 | GND → GND | SCL → G22 | SDA → G21 | - | - | - |
 | **🔘 Buttons** | UP → G27 | DOWN → G26 | OK → G33 | BACK → G32 | - | - | - |
 | **📡 CC1101** | 1 → GND | 2 → 3V3 | 3 → G4 | 4 → G5 | 5 → G18 | 6 → G23 | 7 → G19 |
-| **💡 IR** | IR-T → G12 | IR-R → G14 | - | - | - | - | - |
-| **🔌 GPIO** | A → G35 | B → G25 | C → G17 | D → G16 | E → G13 | F → G12 | - |
-| **💾 SD Card** | 3v3 → 3v3 | CS → GND | MOSI → G15 | CLK → G2 | MISO → G0 | GND → GND | - |
+| **💡 IR** | IR-TX → G16 | IR-RX → G35 | - | - | - | - | - |
+| **🔌 GPIO** | A → G16 | B → G17 | C → G18 | D → G23 | E → G19 | F → G25 | - |
+| **💾 SD Card** | 3v3 → 3v3 | CS → G15 | MOSI → G13 | CLK → G14 | MISO → G12 | GND → GND | - |
 
 ---
 
