@@ -11,7 +11,7 @@
 // Driver
 #define DISPLAY_SH1106 0
 #define DISPLAY_SSD1306 1
-#define DISPLAY_TYPE DISPLAY_SH1106   // DISPLAY_SH1106 | DISPLAY_SSD1306
+#define DISPLAY_TYPE DISPLAY_SH1306   // DISPLAY_SH1106 | DISPLAY_SSD1306
 
 // Buttons
 #define BUTTON_UP 27    // Up
@@ -20,10 +20,10 @@
 #define BUTTON_BACK 32  // Back
 
 // SD Card
-#define SD_MOSI 15
-#define SD_CLK 2
-#define SD_MISO 0
-#define SD_CS -1
+#define SD_CS 15
+#define SD_MOSI 13
+#define SD_CLK 14
+#define SD_MISO 12
 
 // CC1101
 #define CC1101_GDO0 4
@@ -33,18 +33,18 @@
 #define CC1101_MISO 19
 
 // Infrared
-#define IR_TRANSMITTER 12
-#define IR_RECIVER 14
+#define IR_TRANSMITTER 16
+#define IR_RECIVER 35
 
 // GPIO
-#define GPIO_A 35
-#define GPIO_B 25
-#define GPIO_C 17
-#define GPIO_D 16
-#define GPIO_E 13
-#define GPIO_F 12
+#define GPIO_A 16
+#define GPIO_B 17
+#define GPIO_C 18
+#define GPIO_D 23
+#define GPIO_E 19
+#define GPIO_F 25
 
 // Firmware version
-static const char* FIRMWARE = "v0.6";
+static const char* FIRMWARE = "v0.7";
 
 #endif
