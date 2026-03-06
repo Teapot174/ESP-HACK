@@ -107,7 +107,7 @@ Thanks Dripside!
 ### 🔌 Схема подключения
 ![ESP-HACK_Scheme](others/Pictures/Scheme.png)
 
-| Module | Pin | Pin | Pin | Pin | Pin | Pin | Pin |
+| Модуль | Пин | Пин | Пин | Пин | Пин | Пин | Пин |
 |--------|-------|-------|-------|-------|-------|-------|-------|
 | **📺 Дисплей** | VCC → 3V3 | GND → GND | SCL → G22 | SDA → G21 | - | - | - |
 | **🔘 Кнопки** | UP → G27 | DOWN → G26 | OK → G33 | BACK → G32 | - | - | - |
