@@ -113,8 +113,8 @@ Thanks Dripside!
 | **🔘 Кнопки** | UP → G27 | DOWN → G26 | OK → G33 | BACK → G32 | - | - | - |
 | **📡 CC1101** | 1 → GND | 2 → 3V3 | 3 → G4 | 4 → G5 | 5 → G18 | 6 → G23 | 7 → G19 |
 | **💡 ИК** | IR-TX → G16 | IR-RX → G35 | - | - | - | - | - |
-| **🔌 GPIO** | A → G16 | B → G17 | C → G18 | D → G23 | E → G19 | F → G25 | - |
-| **💾 SD Card** | 3v3 → 3v3 | CS → G15 | MOSI → G13 | CLK → G14 | MISO → G12 | GND → GND | - |
+| **🔌 GPIO** | A → G16 | B → G2 | C → G18 | D → G23 | E → G19 | F → G25 | - |
+| **💾 SD Card** | 3v3 → 3v3 | CS → G15 | MOSI → G13 | CLK → G14 | MISO → G17 | GND → GND | - |
 
 ---
 
