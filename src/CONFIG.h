@@ -38,7 +38,7 @@
 
 // GPIO
 #define GPIO_A 16
-#define GPIO_B 12
+#define GPIO_B 2
 #define GPIO_C 18
 #define GPIO_D 23
 #define GPIO_E 19
