@@ -26,6 +26,7 @@ ESP-HACK — мощная универсальная прошивка для ESP
 - Beacon Spam  
 - EvilPortal  
 - Wardriving
+- Packets
 
 ### Bluetooth
 
