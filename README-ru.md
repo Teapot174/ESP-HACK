@@ -22,7 +22,7 @@ ESP-HACK — мощная универсальная прошивка для ESP
 
 ### WiFi
 
-- Deauther *(работает, но плохо)*  
+- Deauther *(анворк, лол)*  
 - Beacon Spam  
 - EvilPortal  
 - Wardriving
