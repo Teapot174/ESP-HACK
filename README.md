@@ -58,7 +58,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Config
 
 **NRF24**
-- Jammer (ILLIGAL)
+- Jammer (ILLEGAL)
 - Spectrum
 - Config
 
