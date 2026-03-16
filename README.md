@@ -22,7 +22,7 @@ By using the firmware, you must comply with the laws of your region. The firmwar
 
 ### WiFi
 
-- Deauther *(works, but poorly)*  
+- Deauther *(nope, lol)*  
 - Beacon Spam  
 - EvilPortal  
 - Wardriving
@@ -42,7 +42,7 @@ IOS, Android, Windows
 - Analyzer
 - Bruteforce:
 Came, Nice, Ansonic, Holtek, Chamberlain
-- Jammer (ILLIGAL)
+- Jammer (ILLEGAL)
 
 ### Infrared
 
