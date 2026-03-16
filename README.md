@@ -26,6 +26,7 @@ By using the firmware, you must comply with the laws of your region. The firmwar
 - Beacon Spam  
 - EvilPortal  
 - Wardriving
+- Packets
 
 ### Bluetooth
 
