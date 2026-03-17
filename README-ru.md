@@ -33,6 +33,7 @@ ESP-HACK — мощная универсальная прошивка для ESP
 - BLE-Spam:
 IOS, Android, Windows
 - BadBLE
+- Mouse
 
 ### SubGHz
 
