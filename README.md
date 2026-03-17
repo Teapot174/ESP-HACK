@@ -33,6 +33,7 @@ By using the firmware, you must comply with the laws of your region. The firmwar
 - BLE-Spam:
 IOS, Android, Windows
 - BadBLE
+- Mouse
 
 ### SubGHz
 
