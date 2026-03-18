@@ -75,32 +75,8 @@ static const unsigned char PROGMEM image_InfraredLearnShort_bits[] = {
 
 
 
-inline void displayIRMenu(DisplayType &display, byte menuIndex) {
-  display.clearDisplay();
-  
-  auto centerText = [](const char* text, int textSize) {
-    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
-  };
-
-  byte next = (menuIndex + 1) % IR_MENU_ITEM_COUNT;
-  byte prev = (menuIndex + IR_MENU_ITEM_COUNT - 1) % IR_MENU_ITEM_COUNT;
-
-  display.setTextSize(2);
-  display.setCursor(centerText(irMenuItems[menuIndex], 2), 25);
-  display.print(irMenuItems[menuIndex]);
-  
-  display.setTextSize(1);
-  display.setCursor(centerText(irMenuItems[next], 1), 50);
-  display.print(irMenuItems[next]);
-  display.setCursor(centerText(irMenuItems[prev], 1), 7);
-  display.print(irMenuItems[prev]);
-  
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-  
-  display.display();
+inline void displayIRMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
+  displayAnimatedMenu(display, irMenuItems, IR_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

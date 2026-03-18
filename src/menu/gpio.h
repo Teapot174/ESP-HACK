@@ -90,32 +90,8 @@ static const unsigned char PROGMEM image_iButtonDolphinSuccess_bits[] = {
 };
 
 
-inline void displayGPIOMenu(DisplayType &display, byte menuIndex) {
-  display.clearDisplay();
-  
-  auto centerText = [](const char* text, int textSize) {
-    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
-  };
-
-  byte next = (menuIndex + 1) % GPIO_MENU_ITEM_COUNT;
-  byte prev = (menuIndex + GPIO_MENU_ITEM_COUNT - 1) % GPIO_MENU_ITEM_COUNT;
-
-  display.setTextSize(2);
-  display.setCursor(centerText(gpioMenuItems[menuIndex], 2), 25);
-  display.print(gpioMenuItems[menuIndex]);
-  
-  display.setTextSize(1);
-  display.setCursor(centerText(gpioMenuItems[next], 1), 50);
-  display.print(gpioMenuItems[next]);
-  display.setCursor(centerText(gpioMenuItems[prev], 1), 7);
-  display.print(gpioMenuItems[prev]);
-  
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-  
-  display.display();
+inline void displayGPIOMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
+  displayAnimatedMenu(display, gpioMenuItems, GPIO_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

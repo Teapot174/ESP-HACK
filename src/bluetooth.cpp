@@ -13,6 +13,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <math.h>
 
 extern DisplayType display;
 extern GButton buttonUp;
@@ -42,17 +43,59 @@ static const uint8_t hidReportDescriptor[] = {
   0xC0
 };
 
+struct MouseReport {
+  uint8_t buttons;
+  int8_t x;
+  int8_t y;
+  int8_t wheel;
+} __attribute__((packed));
+
+static const uint8_t compositeHidReportDescriptor[] = {
+  0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
+  0x85, 0x01,
+  0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7,
+  0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
+  0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
+  0x95, 0x05, 0x75, 0x01, 0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02,
+  0x95, 0x01, 0x75, 0x03, 0x91, 0x01,
+  0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00,
+  0xC0,
+  0x05, 0x01, 0x09, 0x02, 0xA1, 0x01,
+  0x85, 0x02,
+  0x09, 0x01, 0xA1, 0x00,
+  0x05, 0x09, 0x19, 0x01, 0x29, 0x03,
+  0x15, 0x00, 0x25, 0x01,
+  0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
+  0x95, 0x01, 0x75, 0x05, 0x81, 0x01,
+  0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38,
+  0x15, 0x81, 0x25, 0x7F,
+  0x75, 0x08, 0x95, 0x03, 0x81, 0x06,
+  0xC0, 0xC0
+};
+
+enum BLEHidMode {
+  BLE_HID_NONE = 0,
+  BLE_HID_KEYBOARD,
+  BLE_HID_MOUSE
+};
+
+static const uint8_t kSharedBleAddr[6] = {0x33, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+
 bool                  gBleInited   = false;
 NimBLEServer*         gServer      = nullptr;
 NimBLEHIDDevice*      gHid         = nullptr;
-NimBLECharacteristic* gInput       = nullptr;
+NimBLECharacteristic* gKeyboardInput = nullptr;
+NimBLECharacteristic* gMouseInput    = nullptr;
 NimBLEAdvertising*    gAdv         = nullptr;
 uint16_t              gConnHandle  = 0xFFFF;
+BLEHidMode            gBleMode     = BLE_HID_NONE;
+bool                  gBleConnected = false;
+bool                  gBleStopping = false;
 
 static inline void _bb_hidSend(const uint8_t rpt[8]) {
-  if (!gInput) return;
-  gInput->setValue((uint8_t*)rpt, 8);
-  gInput->notify();
+  if (!gKeyboardInput) return;
+  gKeyboardInput->setValue((uint8_t*)rpt, 8);
+  gKeyboardInput->notify();
   delay(12);
 }
 static inline void _bb_hidPress(uint8_t mod, uint8_t key) {
@@ -63,6 +106,14 @@ static inline void _bb_hidPress(uint8_t mod, uint8_t key) {
 static inline void _bb_hidRelease() {
   uint8_t rpt[8] = {0};
   _bb_hidSend(rpt);
+}
+
+static inline void _bm_sendMouseReport(int8_t x, int8_t y, uint8_t buttons = 0) {
+  if (!gMouseInput) return;
+  MouseReport report = {buttons, x, y, 0};
+  gMouseInput->setValue(reinterpret_cast<uint8_t*>(&report), sizeof(report));
+  gMouseInput->notify();
+  delay(10);
 }
 
 static inline bool _bb_isNotifyEnabled(NimBLECharacteristic* ch) {
@@ -155,7 +206,7 @@ static int _bb_parseDelay(const String& s) {
 }
 
 static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, DisplayType &display) {
-  if (!gServer || !gInput) {
+  if (!gServer || !gKeyboardInput) {
     logs.push_back("BLE not initialized");
     Serial.println("[BadKB] BLE not initialized");
     displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
@@ -228,22 +279,71 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
 class PairServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
     gConnHandle = connInfo.getConnHandle();
+    gBleConnected = true;
+    pServer->updateConnParams(gConnHandle, 6, 6, 0, 30);
     Serial.printf("[BLE Pair] Connected (handle=%u)\n", gConnHandle);
   }
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     Serial.printf("[BLE Pair] Disconnected, reason=%d\n", reason);
+    gBleConnected = false;
     gConnHandle = 0xFFFF;
-    if (gAdv) {
+    if (!gBleStopping && gAdv) {
       gAdv->start();
     }
   }
 };
 
-static void ensureBleHidInited() {
+static void stopBLE();
+static void pauseBLE();
+
+static void resetBleRuntimeState() {
+  gBleInited = false;
+  gServer = nullptr;
+  gHid = nullptr;
+  gKeyboardInput = nullptr;
+  gMouseInput = nullptr;
+  gAdv = nullptr;
+  gConnHandle = 0xFFFF;
+  gBleMode = BLE_HID_NONE;
+  gBleConnected = false;
+  gBleStopping = false;
+}
+
+static void disconnectAllBlePeers() {
+  if (!gServer) return;
+
+  const int peerCount = gServer->getConnectedCount();
+  for (int peerIndex = peerCount - 1; peerIndex >= 0; --peerIndex) {
+    NimBLEConnInfo peerInfo = gServer->getPeerInfo((uint8_t)peerIndex);
+    gServer->disconnect(peerInfo.getConnHandle());
+    delay(35);
+  }
+}
+
+static void pauseBLE() {
+  if (!gBleInited) return;
+
+  gBleStopping = true;
+
+  if (gAdv && gAdv->isAdvertising()) {
+    gAdv->stop();
+    delay(20);
+  }
+
+  disconnectAllBlePeers();
+  gBleConnected = false;
+  gConnHandle = 0xFFFF;
+  gBleStopping = false;
+}
+
+static void ensureBleHidInited(BLEHidMode mode) {
+  (void)mode;
   if (gBleInited) return;
 
   Serial.println("[BLE Pair] Initializing BLE...");
-  NimBLEDevice::init("ESP-BLE");
+  NimBLEDevice::init(bleDeviceName);
+  NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
+  NimBLEDevice::setOwnAddr(kSharedBleAddr);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
@@ -254,12 +354,13 @@ static void ensureBleHidInited() {
   gServer->setCallbacks(&sCallbacks);
 
   gHid = new NimBLEHIDDevice(gServer);
-  gInput = gHid->getInputReport(1);
+  gKeyboardInput = gHid->getInputReport(1);
+  gMouseInput = gHid->getInputReport(2);
 
-  gHid->setManufacturer("xAI");
-  gHid->setPnp(0x02, 0x1234, 0xABCD, 0x0110);
+  gHid->setManufacturer("ESP-HACK");
+  gHid->setPnp(0x02, 0x303A, 0x4001, 0x0100);
   gHid->setHidInfo(0x00, 0x01);
-  gHid->setReportMap((uint8_t*)hidReportDescriptor, sizeof(hidReportDescriptor));
+  gHid->setReportMap((uint8_t*)compositeHidReportDescriptor, sizeof(compositeHidReportDescriptor));
   gHid->setBatteryLevel(100);
   gHid->startServices();
 
@@ -268,34 +369,54 @@ static void ensureBleHidInited() {
   NimBLEAdvertisementData scanData;
 
   advData.setFlags(0x06);
-  advData.setAppearance(0x03C1);
+  advData.setAppearance(0x03C0);
   advData.addServiceUUID(gHid->getHidService()->getUUID());
-  scanData.setName("ESP-BLE");
+  scanData.setName(bleDeviceName);
 
   gAdv->setAdvertisementData(advData);
   gAdv->setScanResponseData(scanData);
   gAdv->setMinInterval(32);
   gAdv->setMaxInterval(64);
+  gAdv->enableScanResponse(true);
 
   gBleInited = true;
+  gBleMode = BLE_HID_KEYBOARD;
+  gBleConnected = false;
+  gBleStopping = false;
   Serial.println("[BLE Pair] BLE/HID initialized");
 }
 
 static void stopBLE() {
+  gBleStopping = true;
+
+  if (!gBleInited && !gServer && !gHid && !gAdv) {
+    resetBleRuntimeState();
+    return;
+  }
+
   if (gAdv && gAdv->isAdvertising()) {
     gAdv->stop();
     Serial.println("[BLE Pair] Advertising stopped");
+    delay(30);
   }
-  if (gBleInited) {
-    NimBLEDevice::deinit();
-    gBleInited = false;
-    gServer = nullptr;
+
+  disconnectAllBlePeers();
+
+  if (gHid) {
+    delete gHid;
     gHid = nullptr;
-    gInput = nullptr;
-    gAdv = nullptr;
-    gConnHandle = 0xFFFF;
-    Serial.println("[BLE Pair] BLE deinitialized");
+    gKeyboardInput = nullptr;
+    gMouseInput = nullptr;
+    delay(20);
   }
+
+  if (gBleInited) {
+    NimBLEDevice::deinit(true);
+    delay(120);
+  }
+
+  resetBleRuntimeState();
+  Serial.println("[BLE Pair] BLE deinitialized");
 }
 
 #define MAX_FILES 50
@@ -423,6 +544,96 @@ void displayFullBLESpamScreen(const char* spamType, bool running, const char* de
   display.display();
 }
 
+static const uint8_t mousePowerValues[] = {25, 50, 75, 100};
+static const uint8_t mouseSpeedValues[] = {25, 50, 75, 100};
+static const char* mouseModeLabels[] = {"Circle", "Square", "Up", "Down", "Left", "Right"};
+static const uint8_t mouseModeCount = sizeof(mouseModeLabels) / sizeof(mouseModeLabels[0]);
+
+static void displayMousePairScreen(bool connected, bool ready, const char* errorText = nullptr) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(1, 1);
+  display.println(F("Mouse"));
+  display.setCursor(1, 10);
+  display.println(F("---------------------"));
+
+  display.setCursor(1, 18);
+  if (!connected) display.print(F("Waiting for Pair..."));
+  else if (!ready) display.print(F("Connecting..."));
+  else display.print(F("Connected"));
+
+  if (errorText && errorText[0] != '\0') {
+    display.setCursor(1, 26);
+    display.print(errorText);
+  }
+
+  display.display();
+}
+
+static void displayMouseConfigScreen(uint8_t selection, uint8_t powerIndex, uint8_t speedIndex,
+                                     uint8_t modeIndex, bool running, const char* errorText = nullptr) {
+  const int valueX = 54;
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(1, 1);
+  display.println(F("Mouse"));
+  display.setCursor(1, 10);
+  display.println(F("---------------------"));
+
+  if (errorText && errorText[0] != '\0') {
+    display.setCursor(1, 18);
+    display.print(errorText);
+  }
+
+  display.setCursor(6, 22);
+  display.print(selection == 0 ? ">" : " ");
+  display.print(F("Power:"));
+  display.setCursor(valueX, 22);
+  display.print(mousePowerValues[powerIndex]);
+  display.println(F("%"));
+
+  display.setCursor(6, 30);
+  display.print(selection == 1 ? ">" : " ");
+  display.print(F("Speed:"));
+  display.setCursor(valueX, 30);
+  display.print(mouseSpeedValues[speedIndex]);
+  display.println(F("%"));
+
+  display.setCursor(6, 38);
+  display.print(selection == 2 ? ">" : " ");
+  display.print(F("Mode: "));
+  display.println(mouseModeLabels[modeIndex]);
+
+  display.setCursor(8, 50);
+  display.print(selection == 3 ? ">" : " ");
+  display.println(running ? F("Stop") : F("Start"));
+  display.display();
+}
+
+static void resetMouseMotionState(float& phase, float& prevX, float& prevY, unsigned long& lastStepAt) {
+  phase = 0.0f;
+  prevX = 0.0f;
+  prevY = 0.0f;
+  lastStepAt = 0;
+}
+
+static void resetButtonStates() {
+  buttonUp.resetStates();
+  buttonDown.resetStates();
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+}
+
+static void resetMenuButtonState(MenuButtonState& state) {
+  state.wasPressed = false;
+  state.nextRepeatAt = 0;
+}
+
 void handleBluetoothSubmenu() {
   buttonUp.tick();
   buttonDown.tick();
@@ -437,11 +648,25 @@ void handleBluetoothSubmenu() {
   static String selectedFile = "";
   static bool waitingForConnection = false;
   static bool justEnteredBadBLE = false;
+  static bool inMouseMenu = false;
+  static bool mouseRunning = false;
+  static uint8_t mouseSelection = 0;
+  static uint8_t mousePowerIndex = 0;
+  static uint8_t mouseSpeedIndex = 2;
+  static uint8_t mouseModeIndex = 0;
+  static unsigned long mouseLastStep = 0;
+  static float mousePhase = 0.0f;
+  static float mousePrevX = 0.0f;
+  static float mousePrevY = 0.0f;
+  static bool lastMouseConnected = false;
+  static bool lastMouseReady = false;
+  static bool mousePairingStarted = false;
+  static bool mouseIgnoreButtonsUntilRelease = false;
 
   if (inBadBLE) {
     if (scriptSelected) {
       if (scriptRunning) {
-        ensureBleHidInited();
+        ensureBleHidInited(BLE_HID_KEYBOARD);
         if (!(gAdv && gAdv->isAdvertising())) {
           gAdv->start();
           Serial.println("[BadKB] Started BLE advertising");
@@ -464,6 +689,8 @@ void handleBluetoothSubmenu() {
           waitingForConnection = false;
           waitStartTime = 0;
           delay(3000);
+          _bb_hidRelease();
+          delay(40);
           execLogs.clear();
           bool ok = _bb_runDuckyScript(selectedFile.c_str(), execLogs, display);
           scriptRunning = false;
@@ -492,6 +719,20 @@ void handleBluetoothSubmenu() {
         explorerLoaded = true;
         justEnteredBadBLE = false;
         drawBadKBExplorer(display);
+      }
+    }
+  } else if (inMouseMenu) {
+    if (!mousePairingStarted) {
+      ensureBleHidInited(BLE_HID_MOUSE);
+      if (gAdv && !gAdv->isAdvertising()) {
+        gAdv->start();
+      }
+      mousePairingStarted = true;
+    }
+    if (mouseRunning) {
+      ensureBleHidInited(BLE_HID_MOUSE);
+      if (!(gAdv && gAdv->isAdvertising()) && !gBleConnected && gAdv) {
+        gAdv->start();
       }
     }
   } else {
@@ -553,40 +794,229 @@ void handleBluetoothSubmenu() {
         waitingForConnection = false;
         execLogs.clear();
         execLogTop = 0;
-        ensureBleHidInited();
+        ensureBleHidInited(BLE_HID_KEYBOARD);
         displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
         Serial.println(F("[BadKB] Selected BadKB script"));
       } else if (action == EXPLORER_EXIT) {
         inBadBLE = false;
         explorerLoaded = false;
         justEnteredBadBLE = false;
-        stopBLE();
-        inMenu = true;
+        pauseBLE();
         bluetoothMenuIndex = 0;
         display.clearDisplay();
-        OLED_printMenu(display, currentMenu);
+        returnToMainMenu();
         display.display();
         Serial.println(F("[BadKB] Back to main menu from BadKB"));
       }
       if (justEnteredBadBLE) justEnteredBadBLE = false;
     }
+  } else if (inMouseMenu) {
+    static MenuButtonState mouseUpHeld;
+    static MenuButtonState mouseDownHeld;
+    const bool mouseReady = gBleConnected;
+    const char* mouseErrorText = (mouseRunning && gBleInited && !gMouseInput) ? "BLE error" : "";
+
+    if (lastMouseConnected != gBleConnected || lastMouseReady != mouseReady) {
+      lastMouseConnected = gBleConnected;
+      lastMouseReady = mouseReady;
+      if (mouseReady) {
+        mouseIgnoreButtonsUntilRelease = true;
+        resetButtonStates();
+        resetMenuButtonState(mouseUpHeld);
+        resetMenuButtonState(mouseDownHeld);
+        displayMouseConfigScreen(mouseSelection, mousePowerIndex, mouseSpeedIndex, mouseModeIndex,
+                                 mouseRunning, mouseErrorText);
+      } else {
+        mouseIgnoreButtonsUntilRelease = true;
+        displayMousePairScreen(gBleConnected, mouseReady, mouseErrorText);
+      }
+    }
+
+    if (!mouseReady) {
+      if (buttonBack.isClick()) {
+        if (mousePairingStarted || gBleInited) {
+          pauseBLE();
+        }
+        inMouseMenu = false;
+        mouseRunning = false;
+        mousePairingStarted = false;
+        lastMouseConnected = false;
+        lastMouseReady = false;
+        mouseIgnoreButtonsUntilRelease = false;
+        resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
+        resetButtonStates();
+        resetMenuButtonState(mouseUpHeld);
+        resetMenuButtonState(mouseDownHeld);
+        displayBluetoothMenu(display, bluetoothMenuIndex);
+        return;
+      }
+
+      resetButtonStates();
+      resetMenuButtonState(mouseUpHeld);
+      resetMenuButtonState(mouseDownHeld);
+      return;
+    }
+
+    if (mouseIgnoreButtonsUntilRelease) {
+      if (digitalRead(BUTTON_UP) == LOW || digitalRead(BUTTON_DOWN) == LOW ||
+          digitalRead(BUTTON_OK) == LOW || digitalRead(BUTTON_BACK) == LOW) {
+        resetButtonStates();
+        resetMenuButtonState(mouseUpHeld);
+        resetMenuButtonState(mouseDownHeld);
+        return;
+      }
+      mouseIgnoreButtonsUntilRelease = false;
+      resetButtonStates();
+      resetMenuButtonState(mouseUpHeld);
+      resetMenuButtonState(mouseDownHeld);
+      return;
+    }
+
+    if (isMenuButtonPress(BUTTON_UP, mouseUpHeld)) {
+      mouseSelection = (mouseSelection == 0) ? 3 : mouseSelection - 1;
+      displayMouseConfigScreen(mouseSelection, mousePowerIndex, mouseSpeedIndex, mouseModeIndex,
+                               mouseRunning, mouseErrorText);
+    }
+    if (isMenuButtonPress(BUTTON_DOWN, mouseDownHeld)) {
+      mouseSelection = (mouseSelection + 1) % 4;
+      displayMouseConfigScreen(mouseSelection, mousePowerIndex, mouseSpeedIndex, mouseModeIndex,
+                               mouseRunning, mouseErrorText);
+    }
+
+    if (buttonOK.isClick()) {
+      if (mouseSelection == 0) {
+        mousePowerIndex = (mousePowerIndex + 1) % 4;
+        resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
+      } else if (mouseSelection == 1) {
+        mouseSpeedIndex = (mouseSpeedIndex + 1) % 4;
+        resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
+      } else if (mouseSelection == 2) {
+        mouseModeIndex = (mouseModeIndex + 1) % mouseModeCount;
+        resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
+      } else {
+        mouseRunning = !mouseRunning;
+        if (mouseRunning) {
+          ensureBleHidInited(BLE_HID_MOUSE);
+          if (gAdv && !gAdv->isAdvertising()) {
+            gAdv->start();
+          }
+        }
+        lastMouseConnected = gBleConnected;
+        lastMouseReady = false;
+        resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
+      }
+      displayMouseConfigScreen(mouseSelection, mousePowerIndex, mouseSpeedIndex, mouseModeIndex,
+                               mouseRunning, mouseErrorText);
+    }
+
+    if (buttonBack.isClick()) {
+      if (mousePairingStarted || gBleInited) {
+        pauseBLE();
+      }
+      inMouseMenu = false;
+      mouseRunning = false;
+      mousePairingStarted = false;
+      lastMouseConnected = false;
+      lastMouseReady = false;
+      mouseIgnoreButtonsUntilRelease = false;
+      resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
+      displayBluetoothMenu(display, bluetoothMenuIndex);
+      return;
+    }
+
+    if (mouseRunning && mouseReady) {
+      const uint8_t power = mousePowerValues[mousePowerIndex];
+      const uint8_t speed = mouseSpeedValues[mouseSpeedIndex];
+      const float baseRadius = 36.0f; // Double the default coverage; 25% uses this base
+      const float radius = baseRadius * (power / 25.0f);
+      const unsigned long moveInterval = 44 - (speed * 9UL) / 25UL;
+
+      if (millis() - mouseLastStep >= moveInterval) {
+        int8_t dx = 0;
+        int8_t dy = 0;
+
+        if (mouseModeIndex == 0) {
+          const float x = cosf(mousePhase) * radius;
+          const float y = sinf(mousePhase) * radius;
+          dx = (int8_t)roundf(x - mousePrevX);
+          dy = (int8_t)roundf(y - mousePrevY);
+          mousePrevX = x;
+          mousePrevY = y;
+          mousePhase += 0.24f;
+          if (mousePhase >= 6.2831853f) mousePhase -= 6.2831853f;
+        } else if (mouseModeIndex == 1) {
+          const float edge = radius;
+          const float squarePhase = fmodf(mousePhase, 4.0f);
+          float x = 0.0f;
+          float y = 0.0f;
+          if (squarePhase < 1.0f) {
+            x = -edge + (squarePhase * 2.0f * edge);
+            y = -edge;
+          } else if (squarePhase < 2.0f) {
+            x = edge;
+            y = -edge + ((squarePhase - 1.0f) * 2.0f * edge);
+          } else if (squarePhase < 3.0f) {
+            x = edge - ((squarePhase - 2.0f) * 2.0f * edge);
+            y = edge;
+          } else {
+            x = -edge;
+            y = edge - ((squarePhase - 3.0f) * 2.0f * edge);
+          }
+          dx = (int8_t)roundf(x - mousePrevX);
+          dy = (int8_t)roundf(y - mousePrevY);
+          mousePrevX = x;
+          mousePrevY = y;
+          mousePhase += 0.16f;
+          if (mousePhase >= 4.0f) mousePhase -= 4.0f;
+        } else {
+          const int8_t step = (int8_t)roundf(radius);
+          if (mouseModeIndex == 2) dy = -step;
+          else if (mouseModeIndex == 3) dy = step;
+          else if (mouseModeIndex == 4) dx = -step;
+          else if (mouseModeIndex == 5) dx = step;
+        }
+
+        if (dx != 0 || dy != 0) {
+          _bm_sendMouseReport(dx, dy, 0);
+        }
+        mouseLastStep = millis();
+      }
+    }
   } else {
     if (bleSpamState == IDLE) {
-      if (buttonUp.isClick()) {
+      static MenuButtonState upHeld;
+      static MenuButtonState downHeld;
+
+      if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+        byte previousIndex = bluetoothMenuIndex;
         bluetoothMenuIndex = (bluetoothMenuIndex - 1 + BLUETOOTH_MENU_ITEM_COUNT) % BLUETOOTH_MENU_ITEM_COUNT;
-        displayBluetoothMenu(display, bluetoothMenuIndex);
+        displayBluetoothMenu(display, bluetoothMenuIndex, previousIndex);
       }
-      if (buttonDown.isClick()) {
+      if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+        byte previousIndex = bluetoothMenuIndex;
         bluetoothMenuIndex = (bluetoothMenuIndex + 1) % BLUETOOTH_MENU_ITEM_COUNT;
-        displayBluetoothMenu(display, bluetoothMenuIndex);
+        displayBluetoothMenu(display, bluetoothMenuIndex, previousIndex);
       }
       if (buttonOK.isClick()) {
         if (bluetoothMenuIndex == 3) {
           inBadBLE = true;
+          inMouseMenu = false;
           explorerLoaded = false;
           justEnteredBadBLE = true;
-          ensureBleHidInited();
+          ensureBleHidInited(BLE_HID_KEYBOARD);
           Serial.println(F("[BadKB] Entered BadKB"));
+        } else if (bluetoothMenuIndex == 4) {
+          inMouseMenu = true;
+          inBadBLE = false;
+          explorerLoaded = false;
+          mouseRunning = false;
+          mouseSelection = 0;
+          mousePairingStarted = false;
+          mouseIgnoreButtonsUntilRelease = true;
+          lastMouseConnected = gBleConnected;
+          lastMouseReady = false;
+          displayMousePairScreen(false, false, "");
+          Serial.println(F("[Mouse] Entered Mouse menu"));
         } else {
           bleSpamState = READY;
           switch (bluetoothMenuIndex) {
@@ -599,10 +1029,10 @@ void handleBluetoothSubmenu() {
         }
       }
       if (buttonBack.isClick()) {
-        inMenu = true;
+        inMouseMenu = false;
         bluetoothMenuIndex = 0;
         display.clearDisplay();
-        OLED_printMenu(display, currentMenu);
+        returnToMainMenu();
         display.display();
       }
     } else if (bleSpamState == READY || bleSpamState == RUNNING) {
@@ -613,7 +1043,10 @@ void handleBluetoothSubmenu() {
       if (buttonOK.isClick()) {
         if (bleSpamState == READY) {
           bleSpamState = RUNNING;
-          BLEDevice::init("ESP-HACK");
+          if (gBleInited) {
+            stopBLE();
+          }
+          BLEDevice::init(bleDeviceName);
           lastSpamTime = 0;
           deviceIndex = 0;
           clearBLESpamLog();

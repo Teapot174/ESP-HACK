@@ -41,39 +41,9 @@ void exitSettingsDetail() {
   aboutNeedRedraw = true;
 }
 
-void renderColorSetting() {
+void renderColorSetting(int previousIndex = -1) {
   colorNeedRedraw = false;
-  byte index = colorSelectionWorking;
-  byte next = (index + 1) % COLOR_OPTION_COUNT;
-  byte prev = (index + COLOR_OPTION_COUNT - 1) % COLOR_OPTION_COUNT;
-
-  int16_t x1, y1;
-  uint16_t w, h;
-
-  display.clearDisplay();
-  display.setTextColor(SH110X_WHITE);
-
-  display.setTextSize(1);
-  display.getTextBounds(colorOptions[prev], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 7);
-  display.print(colorOptions[prev]);
-
-  display.setTextSize(2);
-  display.getTextBounds(colorOptions[index], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 25);
-  display.print(colorOptions[index]);
-
-  display.setTextSize(1);
-  display.getTextBounds(colorOptions[next], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 50);
-  display.print(colorOptions[next]);
-
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-
-  display.display();
+  displayAnimatedMenu(display, colorOptions, COLOR_OPTION_COUNT, colorSelectionWorking, previousIndex);
 }
 
 void renderAboutSetting() {
@@ -95,38 +65,9 @@ void renderAboutSetting() {
   display.display();
 }
 
-void renderStandbySetting(byte index) {
+void renderStandbySetting(byte index, int previousIndex = -1) {
   standbyNeedRedraw = false;
-  byte next = (index + 1) % STANDBY_OPTION_COUNT;
-  byte prev = (index + STANDBY_OPTION_COUNT - 1) % STANDBY_OPTION_COUNT;
-
-  int16_t x1, y1;
-  uint16_t w, h;
-
-  display.clearDisplay();
-  display.setTextColor(SH110X_WHITE);
-
-  display.setTextSize(1);
-  display.getTextBounds(standbyTimeoutLabels[prev], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 7);
-  display.print(standbyTimeoutLabels[prev]);
-
-  display.setTextSize(2);
-  display.getTextBounds(standbyTimeoutLabels[index], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 25);
-  display.print(standbyTimeoutLabels[index]);
-
-  display.setTextSize(1);
-  display.getTextBounds(standbyTimeoutLabels[next], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 50);
-  display.print(standbyTimeoutLabels[next]);
-
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-
-  display.display();
+  displayAnimatedMenu(display, standbyTimeoutLabels, STANDBY_OPTION_COUNT, index, previousIndex);
 }
 
 void handleColorDetail(bool upClick, bool downClick, bool okClick, bool backClick) {
@@ -135,8 +76,9 @@ void handleColorDetail(bool upClick, bool downClick, bool okClick, bool backClic
   }
 
   if (upClick || downClick) {
+    byte previousIndex = colorSelectionWorking;
     colorSelectionWorking = colorSelectionWorking == 0 ? 1 : 0;
-    colorNeedRedraw = true;
+    renderColorSetting(previousIndex);
   }
 
   if (okClick) {
@@ -163,18 +105,20 @@ void handleAboutDetail(bool okClick, bool backClick) {
   }
 }
 
-void handleStandbyDetail(bool upClick, bool downClick, bool okClick, bool backClick) {
+void handleStandbyDetail(bool upPress, bool downPress, bool okClick, bool backClick) {
   if (standbyNeedRedraw) {
     renderStandbySetting(standbySelectionIndex);
   }
 
-  if (upClick) {
+  if (upPress) {
+    byte previousIndex = standbySelectionIndex;
     standbySelectionIndex = (standbySelectionIndex + STANDBY_OPTION_COUNT - 1) % STANDBY_OPTION_COUNT;
-    standbyNeedRedraw = true;
+    renderStandbySetting(standbySelectionIndex, previousIndex);
   }
-  if (downClick) {
+  if (downPress) {
+    byte previousIndex = standbySelectionIndex;
     standbySelectionIndex = (standbySelectionIndex + 1) % STANDBY_OPTION_COUNT;
-    standbyNeedRedraw = true;
+    renderStandbySetting(standbySelectionIndex, previousIndex);
   }
   if (okClick) {
     standbyTimeoutIndex = standbySelectionIndex;
@@ -214,6 +158,10 @@ void handleSettingsSubmenu() {
   buttonOK.tick();
   buttonBack.tick();
 
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
+  bool upPress = isMenuButtonPress(BUTTON_UP, upHeld);
+  bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld);
   bool upClick = buttonUp.isClick();
   bool downClick = buttonDown.isClick();
   bool okClick = buttonOK.isClick();
@@ -223,26 +171,34 @@ void handleSettingsSubmenu() {
     handleColorDetail(upClick, downClick, okClick, backClick);
     return;
   } else if (currentDetail == SETTINGS_STANDBY) {
-    handleStandbyDetail(upClick, downClick, okClick, backClick);
+    handleStandbyDetail(upPress, downPress, okClick, backClick);
     return;
   } else if (currentDetail == SETTINGS_ABOUT) {
     handleAboutDetail(okClick, backClick);
     return;
   }
 
-  if (upClick) {
+  if (upPress) {
+    byte previousIndex = settingsMenuIndex;
     settingsMenuIndex = (settingsMenuIndex + SETTINGS_MENU_ITEM_COUNT - 1) % SETTINGS_MENU_ITEM_COUNT;
-    displaySettingsMenu(display, settingsMenuIndex);
+    displaySettingsMenu(display, settingsMenuIndex, previousIndex);
   }
-  if (downClick) {
+  if (downPress) {
+    byte previousIndex = settingsMenuIndex;
     settingsMenuIndex = (settingsMenuIndex + 1) % SETTINGS_MENU_ITEM_COUNT;
-    displaySettingsMenu(display, settingsMenuIndex);
+    displaySettingsMenu(display, settingsMenuIndex, previousIndex);
   }
   if (okClick) {
-    enterSettingsDetail(settingsMenuIndex);
+    if (settingsMenuIndex == 0) {
+      colorSelectionIndex = colorSelectionIndex == 0 ? 1 : 0;
+      applyColorScheme();
+      saveConfig();
+      displaySettingsMenu(display, settingsMenuIndex);
+    } else {
+      enterSettingsDetail(settingsMenuIndex);
+    }
   }
   if (backClick) {
-    inMenu = true;
-    OLED_printMenu(display, currentMenu);
+    returnToMainMenu();
   }
 }

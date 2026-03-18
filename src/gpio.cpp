@@ -210,30 +210,8 @@ void loadNRF24Config() {
   Serial.println(F("No NRF24 config, using defaults"));
 }
 
-void displayNRF24Menu() {
-  display.clearDisplay();
-  auto centerText = [](const char* text, int textSize) {
-    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
-  };
-
-  byte next = (nrf24MenuIndex + 1) % NRF24_MENU_ITEM_COUNT;
-  byte prev = (nrf24MenuIndex + NRF24_MENU_ITEM_COUNT - 1) % NRF24_MENU_ITEM_COUNT;
-
-  display.setTextSize(2);
-  display.setCursor(centerText(nrf24MenuItems[nrf24MenuIndex], 2), 25);
-  display.print(nrf24MenuItems[nrf24MenuIndex]);
-
-  display.setTextSize(1);
-  display.setCursor(centerText(nrf24MenuItems[next], 1), 50);
-  display.print(nrf24MenuItems[next]);
-  display.setCursor(centerText(nrf24MenuItems[prev], 1), 7);
-  display.print(nrf24MenuItems[prev]);
-
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-  display.display();
+void displayNRF24Menu(int previousIndex = -1) {
+  displayAnimatedMenu(display, nrf24MenuItems, NRF24_MENU_ITEM_COUNT, nrf24MenuIndex, previousIndex);
 }
 
 void displayNRF24Config() {
@@ -346,12 +324,14 @@ void startNRFJamming() {
 }
 
 void handleNRF24Config() {
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
-  if (buttonUp.isClick()) {
+  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
     nrf24ConfigIndex = (nrf24ConfigIndex - 1 + 5) % 5;
     displayNRF24Config();
   }
-  if (buttonDown.isClick()) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
     nrf24ConfigIndex = (nrf24ConfigIndex + 1) % 5;
     displayNRF24Config();
   }
@@ -380,12 +360,14 @@ void handleNRF24Config() {
 }
 
 void handleJammingMenu() {
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
-  if (buttonUp.isClick()) {
+  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
     jammingModeIndex = (jammingModeIndex - 1 + JAMMING_MODE_COUNT) % JAMMING_MODE_COUNT;
     displayJammingMenu();
   }
-  if (buttonDown.isClick()) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
     jammingModeIndex = (jammingModeIndex + 1) % JAMMING_MODE_COUNT;
     displayJammingMenu();
   }
@@ -434,14 +416,18 @@ void handleNRF24Submenu() {
   }
   if (inJammingMenu || inJammingActive) return handleJammingMenu();
   if (inNRF24Config) return handleNRF24Config();
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
-  if (buttonUp.isClick()) {
+  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+    byte previousIndex = nrf24MenuIndex;
     nrf24MenuIndex = (nrf24MenuIndex - 1 + NRF24_MENU_ITEM_COUNT) % NRF24_MENU_ITEM_COUNT;
-    displayNRF24Menu();
+    displayNRF24Menu(previousIndex);
   }
-  if (buttonDown.isClick()) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+    byte previousIndex = nrf24MenuIndex;
     nrf24MenuIndex = (nrf24MenuIndex + 1) % NRF24_MENU_ITEM_COUNT;
-    displayNRF24Menu();
+    displayNRF24Menu(previousIndex);
   }
   if (buttonOK.isClick()) {
     Serial.printf("Selected: %s\n", nrf24MenuItems[nrf24MenuIndex]);
@@ -574,31 +560,8 @@ void writeIButtonKey() {
   iButtonWire->reset();
 }
 
-void displayIButtonMenu() {
-  display.clearDisplay();
-
-  auto centerText = [](const char* text, int textSize) {
-    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
-  };
-
-  byte next = (iButtonMenuIndex + 1) % IBUTTON_MENU_ITEM_COUNT;
-  byte prev = (iButtonMenuIndex + IBUTTON_MENU_ITEM_COUNT - 1) % IBUTTON_MENU_ITEM_COUNT;
-
-  display.setTextSize(2);
-  display.setCursor(centerText(iButtonMenuItems[iButtonMenuIndex], 2), 25);
-  display.print(iButtonMenuItems[iButtonMenuIndex]);
-
-  display.setTextSize(1);
-  display.setCursor(centerText(iButtonMenuItems[next], 1), 50);
-  display.print(iButtonMenuItems[next]);
-  display.setCursor(centerText(iButtonMenuItems[prev], 1), 7);
-  display.print(iButtonMenuItems[prev]);
-
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-  display.display();
+void displayIButtonMenu(int previousIndex = -1) {
+  displayAnimatedMenu(display, iButtonMenuItems, IBUTTON_MENU_ITEM_COUNT, iButtonMenuIndex, previousIndex);
 }
 
 void displayIButtonReadWaiting() {
@@ -764,16 +727,22 @@ bool loadIButtonFromSD(const String& fileName) {
 }
 
 void handleIButtonSubmenu() {
+  static MenuButtonState menuUpHeld;
+  static MenuButtonState menuDownHeld;
+  static MenuButtonState readUpHeld;
+  static MenuButtonState readDownHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
 
   if (iButtonState == IBUTTON_MENU) {
-    if (buttonUp.isClick()) {
+    if (isMenuButtonPress(BUTTON_UP, menuUpHeld)) {
+      byte previousIndex = iButtonMenuIndex;
       iButtonMenuIndex = (iButtonMenuIndex - 1 + IBUTTON_MENU_ITEM_COUNT) % IBUTTON_MENU_ITEM_COUNT;
-      displayIButtonMenu();
+      displayIButtonMenu(previousIndex);
     }
-    if (buttonDown.isClick()) {
+    if (isMenuButtonPress(BUTTON_DOWN, menuDownHeld)) {
+      byte previousIndex = iButtonMenuIndex;
       iButtonMenuIndex = (iButtonMenuIndex + 1) % IBUTTON_MENU_ITEM_COUNT;
-      displayIButtonMenu();
+      displayIButtonMenu(previousIndex);
     }
     if (buttonOK.isClick()) {
       if (iButtonMenuIndex == 0) {
@@ -807,12 +776,12 @@ void handleIButtonSubmenu() {
   }
 
   if (iButtonState == IBUTTON_READ_WAIT) {
-    if (buttonUp.isClick()) {
+    if (isMenuButtonPress(BUTTON_UP, readUpHeld)) {
       iButtonPinIndex = (iButtonPinIndex - 1 + IBUTTON_PINS_COUNT) % IBUTTON_PINS_COUNT;
       initIButtonWire();
       displayIButtonReadWaiting();
     }
-    if (buttonDown.isClick()) {
+    if (isMenuButtonPress(BUTTON_DOWN, readDownHeld)) {
       iButtonPinIndex = (iButtonPinIndex + 1) % IBUTTON_PINS_COUNT;
       initIButtonWire();
       displayIButtonReadWaiting();
@@ -925,14 +894,18 @@ void handleIButtonSubmenu() {
 void handleGPIOSubmenu() {
   if (inNRF24Submenu || inNRF24Config || inJammingMenu || inJammingActive || inSpectrumAnalyzer) return handleNRF24Submenu();
   if (inIButtonSubmenu) return handleIButtonSubmenu();
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
-  if (buttonUp.isClick()) {
+  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+    byte previousIndex = gpioMenuIndex;
     gpioMenuIndex = (gpioMenuIndex - 1 + GPIO_MENU_ITEM_COUNT) % GPIO_MENU_ITEM_COUNT;
-    displayGPIOMenu(display, gpioMenuIndex);
+    displayGPIOMenu(display, gpioMenuIndex, previousIndex);
   }
-  if (buttonDown.isClick()) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+    byte previousIndex = gpioMenuIndex;
     gpioMenuIndex = (gpioMenuIndex + 1) % GPIO_MENU_ITEM_COUNT;
-    displayGPIOMenu(display, gpioMenuIndex);
+    displayGPIOMenu(display, gpioMenuIndex, previousIndex);
   }
   if (buttonOK.isClick()) {
     Serial.printf("GPIO option: %s\n", gpioMenuItems[gpioMenuIndex]);
@@ -959,8 +932,7 @@ void handleGPIOSubmenu() {
     }
   }
   if (buttonBack.isClick()) {
-    inMenu = true;
-    OLED_printMenu(display, currentMenu);
+    returnToMainMenu();
     Serial.println(F("Back to main menu"));
   }
 }

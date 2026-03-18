@@ -28,6 +28,8 @@ struct ExplorerState {
   bool inExplorer = false;
   bool inDeleteConfirm = false;
   String selectedFile = "";
+  MenuButtonState upButtonState;
+  MenuButtonState downButtonState;
 };
 
 enum ExplorerAction {

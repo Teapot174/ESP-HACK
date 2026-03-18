@@ -314,34 +314,8 @@ static const unsigned char PROGMEM image_DolphinWait_bits[] = {
 #define SUBGHZ_MENU_ITEM_COUNT 6
 static const char* subghzMenuItems[] = {"Read", "Send", "Analyzer", "Jammer", "Brute", "RAW"};
 
-inline void OLED_printSubGHzMenu(DisplayType &display, byte menuIndex) {
-  display.clearDisplay();
-  display.setTextColor(1);
-  display.setTextWrap(false);
-  
-  auto centerText = [](const char* text, int textSize) {
-    return (128 - strlen(text) * (textSize == 2 ? 12 : 6)) / 2;
-  };
-
-  byte next = (menuIndex + 1) % SUBGHZ_MENU_ITEM_COUNT;
-  byte prev = (menuIndex + SUBGHZ_MENU_ITEM_COUNT - 1) % SUBGHZ_MENU_ITEM_COUNT;
-
-  display.setTextSize(2);
-  display.setCursor(centerText(subghzMenuItems[menuIndex], 2), 25);
-  display.print(subghzMenuItems[menuIndex]);
-  
-  display.setTextSize(1);
-  display.setCursor(centerText(subghzMenuItems[next], 1), 50);
-  display.print(subghzMenuItems[next]);
-  display.setCursor(centerText(subghzMenuItems[prev], 1), 7);
-  display.print(subghzMenuItems[prev]);
-  
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-  
-  display.display();
+inline void OLED_printSubGHzMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
+  displayAnimatedMenu(display, subghzMenuItems, SUBGHZ_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

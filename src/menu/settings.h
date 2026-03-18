@@ -35,35 +35,8 @@ static const unsigned char PROGMEM image_Teapot_bits[] = {
 
 
 
-inline void displaySettingsMenu(DisplayType &display, byte menuIndex) {
-  display.clearDisplay();
-
-  byte next = (menuIndex + 1) % SETTINGS_MENU_ITEM_COUNT;
-  byte prev = (menuIndex + SETTINGS_MENU_ITEM_COUNT - 1) % SETTINGS_MENU_ITEM_COUNT;
-
-  int16_t x1, y1;
-  uint16_t w, h;
-
-  display.setTextSize(2);
-  display.getTextBounds(settingsMenuItems[menuIndex], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 25);
-  display.print(settingsMenuItems[menuIndex]);
-  
-  display.setTextSize(1);
-  display.getTextBounds(settingsMenuItems[next], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 50);
-  display.print(settingsMenuItems[next]);
-
-  display.getTextBounds(settingsMenuItems[prev], 0, 0, &x1, &y1, &w, &h);
-  display.setCursor((128 - w) / 2, 7);
-  display.print(settingsMenuItems[prev]);
-  
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
-  
-  display.display();
+inline void displaySettingsMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
+  displayAnimatedMenu(display, settingsMenuItems, SETTINGS_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

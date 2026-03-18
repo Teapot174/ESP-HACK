@@ -157,6 +157,7 @@ const unsigned long RAW_REC_FRAME_GAP_US = 7000;
 const int RAW_REC_MIN_EDGES = 20;
 const int RAW_REC_MAX_EDGES = 900;
 bool rawRecorderRunning = false;
+bool rawRecorderIgnoreOkRelease = false;
 float rawRecorderRssiThreshold = RAW_REC_DEFAULT_RSSI;
 float rawRecorderLastRssi = -127.0f;
 uint16_t rawRecorderSavedCount = 0;
@@ -180,6 +181,7 @@ void OLED_printRawRecorder();
 void OLED_printKey(tpKeyData* kd, String fileName = "", bool isSending = false);
 void OLED_printError(String st, bool err = true);
 bool saveKeyToSD(tpKeyData* kd);
+String allocateNextSignalFileName();
 bool startRawRecorderSession();
 void stopRawRecorderSession(bool flushPending = true, bool discardFile = false);
 bool saveRawFrameToSession(const String& rawData, float rssi);
@@ -251,6 +253,8 @@ void runSubGHz() {
   OLED_printSubGHzMenu(display, menuIndex);
 
   while (true) {
+    static MenuButtonState upHeld;
+    static MenuButtonState downHeld;
     buttonUp.tick();
     buttonDown.tick();
     buttonOK.tick();
@@ -258,13 +262,15 @@ void runSubGHz() {
 
     if (menuState == menuMain) {
       byte lastMenuIndex = SUBGHZ_MENU_ITEM_COUNT - 1;
-      if (buttonUp.isClick()) {
+      if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+        byte previousIndex = menuIndex;
         menuIndex = (menuIndex == 0) ? lastMenuIndex : menuIndex - 1;
-        OLED_printSubGHzMenu(display, menuIndex);
+        OLED_printSubGHzMenu(display, menuIndex, previousIndex);
       }
-      if (buttonDown.isClick()) {
+      if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+        byte previousIndex = menuIndex;
         menuIndex = (menuIndex == lastMenuIndex) ? 0 : menuIndex + 1;
-        OLED_printSubGHzMenu(display, menuIndex);
+        OLED_printSubGHzMenu(display, menuIndex, previousIndex);
       }
       if (buttonOK.isClick()) {
         if (menuIndex == 0) {
@@ -303,6 +309,7 @@ void runSubGHz() {
           menuState = menuRawRecorder;
           setupCC1101();
           rawRecorderRunning = false;
+          rawRecorderIgnoreOkRelease = true;
           rawRecorderSavedCount = 0;
           rawRecorderLastRssi = -127.0f;
           rawRecorderLastFile = "";
@@ -312,6 +319,7 @@ void runSubGHz() {
           rawRecorderPrevEdgeUs = micros();
           rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
           rawRecorderLastDraw = 0;
+          resetButtonStates();
           OLED_printRawRecorder();
         }
       }
@@ -374,8 +382,18 @@ void runSubGHz() {
         }
       }
     } else if (menuState == menuRawRecorder) {
+      if (rawRecorderIgnoreOkRelease) {
+        if (digitalRead(BUTTON_OK) == LOW) {
+          (void)buttonOK.isClick();
+        } else {
+          rawRecorderIgnoreOkRelease = false;
+          buttonOK.resetStates();
+        }
+      }
+
       bool upClick = buttonUp.isClick();
       bool downClick = buttonDown.isClick();
+      bool okClick = !rawRecorderIgnoreOkRelease && buttonOK.isClick();
 
       if (!rawRecorderRunning && upClick) {
         stepFrequency(1);
@@ -395,7 +413,18 @@ void runSubGHz() {
         rawRecorderEdgeCount = 0;
         OLED_printRawRecorder();
       }
-      if (buttonOK.isClick()) {
+      if (buttonBack.isClick()) {
+        if (rawRecorderRunning) {
+          stopRawRecorderSession(true, false);
+          rawRecorderRunning = false;
+          rawRecorderLastDraw = 0;
+          OLED_printRawRecorder();
+        } else {
+          menuState = menuMain;
+          resetButtonStates();
+          OLED_printSubGHzMenu(display, menuIndex);
+        }
+      } else if (okClick) {
         if (!rawRecorderRunning) {
           if (startRawRecorderSession()) {
             rawRecorderRunning = true;
@@ -410,18 +439,6 @@ void runSubGHz() {
         }
         rawRecorderLastDraw = 0;
         OLED_printRawRecorder();
-      }
-      if (buttonBack.isClick()) {
-        if (rawRecorderRunning) {
-          stopRawRecorderSession(true, false);
-          rawRecorderRunning = false;
-          rawRecorderLastDraw = 0;
-          OLED_printRawRecorder();
-        } else {
-          menuState = menuMain;
-          resetButtonStates();
-          OLED_printSubGHzMenu(display, menuIndex);
-        }
       } else if (rawRecorderRunning) {
         handleRawRecorderCapture();
         if (millis() - rawRecorderLastDraw >= 120) {
@@ -849,18 +866,62 @@ static void ensureSubExplorerDir() {
   }
 }
 
-bool startRawRecorderSession() {
+String allocateNextSignalFileName() {
   ensureSubExplorerDir();
+  if (!nextSignalIndexReady) {
+    int maxSignalIndex = 0;
+    File dir = SD.open(subExplorer.currentDir);
+    if (dir) {
+      while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) break;
+        if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
+          String entryName = entry.name();
+          int lastSlash = entryName.lastIndexOf('/');
+          if (lastSlash >= 0) entryName = entryName.substring(lastSlash + 1);
+          if (entryName.startsWith("Signal_") && entryName.endsWith(".sub")) {
+            String numStr = entryName.substring(7, entryName.length() - 4);
+            int num = numStr.toInt();
+            if (num > maxSignalIndex) maxSignalIndex = num;
+          }
+        }
+        entry.close();
+      }
+      dir.close();
+    }
+    nextSignalIndex = maxSignalIndex + 1;
+    if (nextSignalIndex < 1) nextSignalIndex = 1;
+    nextSignalIndexReady = true;
+  }
 
-  int fileNum = 1;
+  int fileNum = (nextSignalIndex > 0) ? nextSignalIndex : 1;
   String fileName;
   while (fileNum <= 999) {
-    fileName = subExplorer.currentDir + "/RAW_" + String(fileNum) + ".sub";
+    fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
     if (!SD.exists(fileName)) break;
     fileNum++;
   }
   if (fileNum > 999) {
-    Serial.println(F("No free RAW_*.sub slots"));
+    fileNum = 1;
+    while (fileNum <= 999) {
+      fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
+      if (!SD.exists(fileName)) break;
+      fileNum++;
+    }
+  }
+  if (fileNum > 999) {
+    Serial.println(F("No free Signal_*.sub slots"));
+    return "";
+  }
+
+  nextSignalIndex = fileNum + 1;
+  nextSignalIndexReady = true;
+  return fileName;
+}
+
+bool startRawRecorderSession() {
+  String fileName = allocateNextSignalFileName();
+  if (fileName.length() == 0) {
     return false;
   }
 
@@ -971,49 +1032,8 @@ bool saveKeyToSD(tpKeyData* kd) {
   if (!kd || kd->codeLenth == 0 || kd->frequency == 0.0) {
     return false;
   }
-  ensureSubExplorerDir();
-  if (!nextSignalIndexReady) {
-    int maxSignalIndex = 0;
-    File dir = SD.open(subExplorer.currentDir);
-    if (dir) {
-      while (true) {
-        File entry = dir.openNextFile();
-        if (!entry) break;
-        if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
-          String entryName = entry.name();
-          int lastSlash = entryName.lastIndexOf('/');
-          if (lastSlash >= 0) entryName = entryName.substring(lastSlash + 1);
-          if (entryName.startsWith("Signal_") && entryName.endsWith(".sub")) {
-            String numStr = entryName.substring(7, entryName.length() - 4);
-            int num = numStr.toInt();
-            if (num > maxSignalIndex) maxSignalIndex = num;
-          }
-        }
-        entry.close();
-      }
-      dir.close();
-      nextSignalIndex = maxSignalIndex + 1;
-      if (nextSignalIndex < 1) nextSignalIndex = 1;
-      nextSignalIndexReady = true;
-    }
-  }
-  int fileNum = (nextSignalIndex > 0) ? nextSignalIndex : 1;
-  String fileName;
-  while (fileNum <= 999) {
-    fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
-    if (!SD.exists(fileName)) break;
-    fileNum++;
-  }
-  if (fileNum > 999) {
-    fileNum = 1;
-    while (fileNum <= 999) {
-      fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
-      if (!SD.exists(fileName)) break;
-      fileNum++;
-    }
-  }
-  if (fileNum > 999) {
-    Serial.println(F("No free Signal_*.sub slots"));
+  String fileName = allocateNextSignalFileName();
+  if (fileName.length() == 0) {
     return false;
   }
   File file = SD.open(fileName, FILE_WRITE);
@@ -1042,8 +1062,6 @@ bool saveKeyToSD(tpKeyData* kd) {
   file.close();
   Serial.print(F("Saved to "));
   Serial.println(fileName);
-  nextSignalIndex = fileNum + 1;
-  nextSignalIndexReady = true;
   return true;
 }
 

@@ -140,6 +140,32 @@ static bool explorerMatchesExtension(const String& name, const ExplorerConfig& c
   return false;
 }
 
+static bool explorerIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+  const unsigned long initialDelayMs = 250;
+  const unsigned long repeatDelayMs = 250;
+
+  if (!pressed) {
+    state.wasPressed = false;
+    state.nextRepeatAt = 0;
+    return false;
+  }
+
+  if (!state.wasPressed) {
+    state.wasPressed = true;
+    state.nextRepeatAt = now + initialDelayMs;
+    return true;
+  }
+
+  if (now >= state.nextRepeatAt) {
+    state.nextRepeatAt = now + repeatDelayMs;
+    return true;
+  }
+
+  return false;
+}
+
 void ExplorerInit(ExplorerState& state, ExplorerEntry* buffer, int bufferSize, const ExplorerConfig& cfg) {
   state.list = buffer;
   state.maxFiles = bufferSize;
@@ -149,6 +175,8 @@ void ExplorerInit(ExplorerState& state, ExplorerEntry* buffer, int bufferSize, c
   state.inExplorer = true;
   state.inDeleteConfirm = false;
   state.selectedFile = "";
+  state.upButtonState = {};
+  state.downButtonState = {};
 }
 
 void ExplorerLoad(ExplorerState& state, const ExplorerConfig& cfg) {
@@ -301,6 +329,9 @@ static void explorerShowDeleteResult(DisplayType& display, bool ok) {
 
 ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, DisplayType& display,
                               bool upClick, bool downClick, bool okClick, bool backClick, bool backHold) {
+  (void)upClick;
+  (void)downClick;
+
   if (state.inDeleteConfirm) {
     if (okClick) {
       bool ok = explorerDeleteSelected(state);
@@ -330,11 +361,14 @@ ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, D
     return EXPLORER_NONE;
   }
 
-  if (upClick && state.count > 0) {
+  const bool upPress = explorerIsNavButtonPress(BUTTON_UP, state.upButtonState);
+  const bool downPress = explorerIsNavButtonPress(BUTTON_DOWN, state.downButtonState);
+
+  if (upPress && state.count > 0) {
     state.index = (state.index == 0) ? (state.count - 1) : state.index - 1;
     ExplorerDraw(state, display);
   }
-  if (downClick && state.count > 0) {
+  if (downPress && state.count > 0) {
     state.index = (state.index == state.count - 1) ? 0 : state.index + 1;
     ExplorerDraw(state, display);
   }

@@ -55,6 +55,8 @@ extern const byte STANDBY_OPTION_COUNT = sizeof(standbyTimeoutOptionsMs) / sizeo
 const char* colorOptions[] = {"White", "Black"};
 extern const byte COLOR_OPTION_COUNT = 2;
 const char* CONFIG_PATH = "/esphack.cfg";
+char wifiPortalName[33] = "FREE WIFI";
+char bleDeviceName[33] = "ESP-BLE";
 
 unsigned long lastActivityTime = 0;
 byte standbyTimeoutIndex = 2;
@@ -82,6 +84,10 @@ void saveConfig() {
   cfg.println(standbyTimeoutConfigValues[standbyTimeoutIndex]);
   cfg.print(F("color="));
   cfg.println(colorSelectionIndex == 0 ? F("white") : F("black"));
+  cfg.print(F("WiFi_NAME="));
+  cfg.println(wifiPortalName);
+  cfg.print(F("BLE_NAME="));
+  cfg.println(bleDeviceName);
   cfg.close();
 }
 
@@ -89,6 +95,8 @@ void loadConfig() {
   byte parsedStandby = standbyTimeoutIndex;
   byte parsedColor = colorSelectionIndex;
   bool loaded = false;
+  bool hasWifiName = false;
+  bool hasBleName = false;
 
   File cfg = SD.open(CONFIG_PATH, FILE_READ);
   if (cfg) {
@@ -114,6 +122,20 @@ void loadConfig() {
         val.toLowerCase();
         if (val == "white") parsedColor = 0;
         else parsedColor = 1;
+      } else if (line.startsWith("WiFi_NAME=") || line.startsWith("wifi_name=")) {
+        String val = line.substring(line.indexOf('=') + 1);
+        val.trim();
+        hasWifiName = true;
+        if (val.length() > 0) {
+          val.toCharArray(wifiPortalName, sizeof(wifiPortalName));
+        }
+      } else if (line.startsWith("BLE_NAME=") || line.startsWith("ble_name=")) {
+        String val = line.substring(line.indexOf('=') + 1);
+        val.trim();
+        hasBleName = true;
+        if (val.length() > 0) {
+          val.toCharArray(bleDeviceName, sizeof(bleDeviceName));
+        }
       }
     }
     cfg.close();
@@ -124,7 +146,7 @@ void loadConfig() {
   colorSelectionIndex = parsedColor;
   applyColorScheme();
 
-  if (!loaded) {
+  if (!loaded || !hasWifiName || !hasBleName) {
     saveConfig();
   }
 }
@@ -138,6 +160,44 @@ void resetActivityTimer() {
       OLED_printMenu(display, currentMenu);
     }
   }
+}
+
+void returnToMainMenu() {
+  buttonUp.resetStates();
+  buttonDown.resetStates();
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+  inStandby = false;
+  lastActivityTime = millis();
+  standbyIgnoreUntilMs = millis() + 250;
+  inMenu = true;
+  OLED_printMenu(display, currentMenu);
+}
+
+static bool isMainMenuButtonPress(uint8_t pin, MenuButtonState &state) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+  const unsigned long initialDelayMs = 250;
+  const unsigned long repeatDelayMs = 250;
+
+  if (!pressed) {
+    state.wasPressed = false;
+    state.nextRepeatAt = 0;
+    return false;
+  }
+
+  if (!state.wasPressed) {
+    state.wasPressed = true;
+    state.nextRepeatAt = now + initialDelayMs;
+    return true;
+  }
+
+  if (now >= state.nextRepeatAt) {
+    state.nextRepeatAt = now + repeatDelayMs;
+    return true;
+  }
+
+  return false;
 }
 
 void enterStandby() {
@@ -276,6 +336,8 @@ void setup() {
 }
 
 void loop() {
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
   buttonUp.tick();
   buttonDown.tick();
   buttonOK.tick();
@@ -297,23 +359,25 @@ void loop() {
   }
 
   if (inMenu) {
-    bool upClick = buttonUp.isClick();
-    bool downClick = buttonDown.isClick();
+    bool upPress = isMainMenuButtonPress(BUTTON_UP, upHeld);
+    bool downPress = isMainMenuButtonPress(BUTTON_DOWN, downHeld);
     bool okClick = buttonOK.isClick();
     bool backClick = buttonBack.isClick();
 
-    bool anyClick = upClick || downClick || okClick || backClick;
+    bool anyClick = upPress || downPress || okClick || backClick;
     if (anyClick) {
       resetActivityTimer();
     }
 
-    if (upClick) {
+    if (upPress) {
+      byte previousIndex = currentMenu;
       currentMenu = (currentMenu - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
-      OLED_printMenu(display, currentMenu);
+      OLED_printMenuAnimated(display, currentMenu, previousIndex);
     }
-    if (downClick) {
+    if (downPress) {
+      byte previousIndex = currentMenu;
       currentMenu = (currentMenu + 1) % MENU_ITEM_COUNT;
-      OLED_printMenu(display, currentMenu);
+      OLED_printMenuAnimated(display, currentMenu, previousIndex);
     }
     if (okClick) {
       inMenu = false;
@@ -324,9 +388,9 @@ void loop() {
         bluetoothMenuIndex = 0;
         displayBluetoothMenu(display, bluetoothMenuIndex);
       } else if (currentMenu == 2) {
+        inMenu = false;
         runSubGHz();
-        inMenu = true;
-        OLED_printMenu(display, currentMenu);
+        returnToMainMenu();
       } else if (currentMenu == 3) {
         irMenuIndex = 0;
         displayIRMenu(display, irMenuIndex);

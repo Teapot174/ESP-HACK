@@ -53,10 +53,10 @@ const uint8_t channels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
 const uint8_t channels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 #endif
 const bool wpa2 = true;
+const uint8_t beaconChannels[] = {1, 6, 11};
 int spread = 1, spamtype = 1;
 uint8_t channelIndex = 0, wifi_channel = 1;
 uint32_t packetCounter = 0;
-char emptySSID[32];
 uint8_t macAddr[6];
 
 const char funnyssids[] PROGMEM = {
@@ -133,7 +133,8 @@ extern "C" {
   esp_err_t esp_wifi_80211_tx(wifi_interface_t ifx, const void *buffer, int len, bool en_sys_seq);
 }
 
-uint8_t beaconPacket[109] = {
+constexpr size_t BEACON_PKT_LEN = 109;
+const uint8_t beaconPacketTemplate[BEACON_PKT_LEN] = {
   0x80, 0x00, 0x00, 0x00,
   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
   0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
@@ -143,7 +144,7 @@ uint8_t beaconPacket[109] = {
   0xe8, 0x03,
   0x31, 0x00,
   0x00, 0x20,
-  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+  0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
@@ -160,6 +161,30 @@ uint8_t beaconPacket[109] = {
   0x00, 0x0f, 0xac, 0x02,
   0x00, 0x00
 };
+
+static inline void prepareBeaconPacket(
+  uint8_t outPacket[BEACON_PKT_LEN], const uint8_t macAddr[6], const char *ssid, uint8_t ssidLen,
+  uint8_t channel, bool setWPAflag = true
+) {
+  memcpy(outPacket, beaconPacketTemplate, BEACON_PKT_LEN);
+  memcpy(&outPacket[10], macAddr, 6);
+  memcpy(&outPacket[16], macAddr, 6);
+  memset(&outPacket[38], 0x20, 32);
+  if (ssidLen > 32) ssidLen = 32;
+  outPacket[37] = ssidLen;
+  if (ssidLen > 0) {
+    memcpy(&outPacket[38], ssid, ssidLen);
+  }
+  outPacket[82] = channel;
+  outPacket[34] = setWPAflag ? 0x31 : 0x21;
+}
+
+void generateRandomWiFiMac(uint8_t *mac) {
+  mac[0] = 0x02;
+  for (int i = 1; i < 6; i++) {
+    mac[i] = random(0, 255);
+  }
+}
 
 #define MAX_PORTAL_FILES 50
 static const char* portalExts[] = {".html", ".htm"};
@@ -490,9 +515,11 @@ void displayPacketsGraph() {
 }
 
 void beaconSpamList(const char list[]) {
-  int i = 0, ssidNum = 1;
+  uint8_t beaconPacket[BEACON_PKT_LEN];
   int ssidsLen = strlen_P(list);
+  int ssidCounter = 0;
 
+  int i = 0;
   while (i < ssidsLen && isSpamming) {
     buttonOK.tick();
     buttonBack.tick();
@@ -503,39 +530,40 @@ void beaconSpamList(const char list[]) {
       return;
     }
 
+    char ssidBuf[32];
     int j = 0;
     char tmp;
     do {
-      tmp = pgm_read_byte(list + i + j++);
-    } while (tmp != '\n' && j <= 32 && i + j < ssidsLen);
+      tmp = pgm_read_byte(list + i + j);
+      if (j < 32 && tmp != '\n') ssidBuf[j] = tmp;
+      j++;
+    } while (tmp != '\n' && i + j < ssidsLen);
 
-    uint8_t ssidLen = j - 1;
-    char ssidBuf[33];
-    for (uint8_t idx = 0; idx < ssidLen && idx < 32; idx++) {
-      ssidBuf[idx] = pgm_read_byte(list + i + idx);
-    }
+    uint8_t ssidLen = (j > 32) ? 32 : j - 1;
     ssidBuf[ssidLen] = '\0';
     pushBeaconLog(ssidBuf);
-    displaySpamActive();
-    macAddr[5] = ssidNum++;
-    memcpy(&beaconPacket[10], macAddr, 6);
-    memcpy(&beaconPacket[16], macAddr, 6);
-    memcpy(&beaconPacket[38], emptySSID, 32);
-    memcpy_P(&beaconPacket[38], &list[i], ssidLen);
-    beaconPacket[82] = wifi_channel;
+    if ((ssidCounter++ & 0x03) == 0) {
+      displaySpamActive();
+    }
 
-    for (int k = 0; k < 3 && isSpamming; k++) {
-      esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, beaconPacket, sizeof(beaconPacket), false);
-      if (result == ESP_OK) {
-        packetCounter++;
+    generateRandomWiFiMac(macAddr);
+    for (uint8_t channel : beaconChannels) {
+      wifi_channel = channel;
+      esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE);
+      prepareBeaconPacket(beaconPacket, macAddr, ssidBuf, ssidLen, wifi_channel, true);
+
+      for (int k = 0; k < 6 && isSpamming; k++) {
+        esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, beaconPacket, BEACON_PKT_LEN, false);
+        if (result == ESP_OK) {
+          packetCounter++;
+        }
       }
     }
 
     i += j;
-    nextChannel();
 
     unsigned long start = millis();
-    while (millis() - start < 10 && isSpamming) {
+    while (millis() - start < 1 && isSpamming) {
       buttonOK.tick();
       buttonBack.tick();
       if (buttonOK.isClick() || buttonBack.isClick()) {
@@ -546,6 +574,8 @@ void beaconSpamList(const char list[]) {
       }
     }
   }
+
+  displaySpamActive();
 }
 
 void handlePostRequest() {
@@ -612,7 +642,7 @@ void startEvilPortal() {
   WiFi.mode(WIFI_OFF);
   delay(100);
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("FREE WIFI", "");
+  WiFi.softAP(wifiPortalName, "");
   Serial.println(F("AP started. IP: 192.168.4.1"));
 
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -980,9 +1010,6 @@ void handlePacketsMenu() {
 }
 
 void handleWiFiSubmenu() {
-  memset(emptySSID, 0x20, 32);
-  emptySSID[31] = '\0';
-
   buttonUp.tick();
   buttonDown.tick();
   buttonOK.tick();
@@ -1015,9 +1042,8 @@ void handleWiFiSubmenu() {
       } else if (action == EXPLORER_EXIT) {
         inEvilPortal = false;
         inPortalExplorer = false;
-        inMenu = true;
         currentMenu = 0;
-        OLED_printMenu(display, currentMenu);
+        returnToMainMenu();
       }
       return;
     } else {
@@ -1037,12 +1063,25 @@ void handleWiFiSubmenu() {
   if (inWardriving) { handleWardriving(); return; }
   if (inPacketsMenu) { handlePacketsMenu(); return; }
 
-  bool upClick = buttonUp.isClick();
-  bool downClick = buttonDown.isClick();
+  bool upPress = buttonUp.isPress();
+  bool downPress = buttonDown.isPress();
   bool okClick = buttonOK.isClick();
   bool backClick = buttonBack.isClick();
+  bool inFunctionSelection = !inSpamMenu && !inEvilPortal && !inDeauthMenu && !inWardriving && !inPacketsMenu;
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
 
-  if (okClick && wifiMenuIndex == 2) {
+  if (inFunctionSelection) {
+    upPress = isMenuButtonPress(BUTTON_UP, upHeld);
+    downPress = isMenuButtonPress(BUTTON_DOWN, downHeld);
+  } else {
+    upHeld.wasPressed = digitalRead(BUTTON_UP) == LOW;
+    downHeld.wasPressed = digitalRead(BUTTON_DOWN) == LOW;
+    upHeld.nextRepeatAt = 0;
+    downHeld.nextRepeatAt = 0;
+  }
+
+  if (inFunctionSelection && okClick && wifiMenuIndex == 2) {
     inEvilPortal = true;
     inPortalExplorer = true;
     ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
@@ -1058,14 +1097,16 @@ void handleWiFiSubmenu() {
     displayWiFiMenu(display, wifiMenuIndex);
   }
 
-  if (!inSpamMenu && !inEvilPortal && !inDeauthMenu && !inWardriving) {
-    if (upClick) {
+  if (inFunctionSelection) {
+    if (upPress) {
+      byte previousIndex = wifiMenuIndex;
       wifiMenuIndex = (wifiMenuIndex - 1 + WIFI_MENU_ITEM_COUNT) % WIFI_MENU_ITEM_COUNT;
-      displayWiFiMenu(display, wifiMenuIndex);
+      displayWiFiMenu(display, wifiMenuIndex, previousIndex);
     }
-    if (downClick) {
+    if (downPress) {
+      byte previousIndex = wifiMenuIndex;
       wifiMenuIndex = (wifiMenuIndex + 1) % WIFI_MENU_ITEM_COUNT;
-      displayWiFiMenu(display, wifiMenuIndex);
+      displayWiFiMenu(display, wifiMenuIndex, previousIndex);
     }
   }
 
@@ -1119,9 +1160,8 @@ void handleWiFiSubmenu() {
       inSpamMenu = false;
       displayWiFiMenu(display, wifiMenuIndex);
     } else {
-      inMenu = true;
       wifiMenuIndex = 0;
-      OLED_printMenu(display, currentMenu);
+      returnToMainMenu();
     }
   }
 

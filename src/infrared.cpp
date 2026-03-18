@@ -865,11 +865,10 @@ void handleIRSubmenu() {
     } else if (action == EXPLORER_EXIT) {
       inIRMenu = false;
       state = MENU;
-      inMenu = true;
       currentMenu = 3;
       irExplorer.selectedFile = "";
       display.clearDisplay();
-      OLED_printMenu(display, currentMenu);
+      returnToMainMenu();
       display.display();
     }
   } else if (state == IR_READING) {
@@ -930,6 +929,8 @@ void handleIRSubmenu() {
     }
     yield();
   } else {
+    static MenuButtonState upHeld;
+    static MenuButtonState downHeld;
     if (!inIRMenu) {
       inIRMenu = true;
       display.clearDisplay();
@@ -943,11 +944,17 @@ void handleIRSubmenu() {
       display.display();
       lastMenuIndex = irMenuIndex;
     }
-    if (buttonUp.isClick()) {
+    if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+      byte previousIndex = irMenuIndex;
       irMenuIndex = (irMenuIndex - 1 + IR_MENU_ITEM_COUNT) % IR_MENU_ITEM_COUNT;
+      displayIRMenu(display, irMenuIndex, previousIndex);
+      lastMenuIndex = irMenuIndex;
     }
-    if (buttonDown.isClick()) {
+    if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+      byte previousIndex = irMenuIndex;
       irMenuIndex = (irMenuIndex + 1) % IR_MENU_ITEM_COUNT;
+      displayIRMenu(display, irMenuIndex, previousIndex);
+      lastMenuIndex = irMenuIndex;
     }
     if (buttonOK.isClick()) {
       switch (irMenuIndex) {
@@ -985,10 +992,9 @@ void handleIRSubmenu() {
     if (buttonBack.isClick()) {
       inIRMenu = false;
       state = MENU;
-      inMenu = true;
       currentMenu = 3;
       display.clearDisplay();
-      OLED_printMenu(display, currentMenu);
+      returnToMainMenu();
       display.display();
     }
   }
