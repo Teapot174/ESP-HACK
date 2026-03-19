@@ -83,6 +83,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Chamberlain
 - StarLine  
 - KeeLoq
+- Any other protocol with RAW mode
 
 ---
 
