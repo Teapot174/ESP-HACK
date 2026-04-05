@@ -4,16 +4,11 @@
 #include "menu/bluetooth.h"
 #include "ble_spam.h"
 #include "menu/subghz.h"
-#include <SD.h>
 #include "Explorer.h"
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEAdvertising.h>
-#include <vector>
-#include <string>
-#include <algorithm>
-#include <math.h>
 
 extern DisplayType display;
 extern GButton buttonUp;
