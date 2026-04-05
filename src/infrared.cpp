@@ -1,10 +1,10 @@
 #include "display.h"
 #include <GyverButton.h>
 #include <IRremoteESP8266.h>
+#include <SD.h>
 #include <IRrecv.h>
 #include <IRsend.h>
 #include <IRutils.h>
-#include <SD.h>
 #include "CONFIG.h"
 #include "menu/infrared.h"
 #include "menu/subghz.h"
@@ -168,6 +168,60 @@ String uint32ToString(uint32_t value) {
     (value >> 24) & 0xFF
   );
   return String(buffer);
+}
+
+String uint64ToByteString(uint64_t value) {
+  char buffer[24] = {0};
+  snprintf(
+    buffer,
+    sizeof(buffer),
+    "%02X %02X %02X %02X %02X %02X %02X %02X",
+    static_cast<unsigned int>(value & 0xFF),
+    static_cast<unsigned int>((value >> 8) & 0xFF),
+    static_cast<unsigned int>((value >> 16) & 0xFF),
+    static_cast<unsigned int>((value >> 24) & 0xFF),
+    static_cast<unsigned int>((value >> 32) & 0xFF),
+    static_cast<unsigned int>((value >> 40) & 0xFF),
+    static_cast<unsigned int>((value >> 48) & 0xFF),
+    static_cast<unsigned int>((value >> 56) & 0xFF)
+  );
+  return String(buffer);
+}
+
+uint64_t parseHexBytesToUint64LE(String str) {
+  str.trim();
+  uint64_t value = 0;
+  int byteIndex = 0;
+
+  while (str.length() > 0 && byteIndex < 8) {
+    int spaceIndex = str.indexOf(' ');
+    String byteStr;
+    if (spaceIndex == -1) {
+      byteStr = str;
+      str = "";
+    } else {
+      byteStr = str.substring(0, spaceIndex);
+      str = str.substring(spaceIndex + 1);
+    }
+    byteStr.trim();
+    if (byteStr.length() > 0) {
+      value |= (static_cast<uint64_t>(strtoul(byteStr.c_str(), nullptr, 16)) & 0xFF)
+               << (byteIndex * 8);
+      byteIndex++;
+    }
+  }
+
+  return value;
+}
+
+String normalizeProtocolName(String protocol) {
+  protocol.trim();
+  const String repeatSuffix = F(" (Repeat)");
+  if (protocol.endsWith(repeatSuffix)) {
+    protocol.remove(protocol.length() - repeatSuffix.length());
+    protocol.trim();
+  }
+  return protocol;
 }
 
 void resetTvbgState() {
@@ -477,6 +531,7 @@ bool sendIRSignal(String fileName, int signalIdx) {
   String protocol = "";
   String address = "";
   String command = "";
+  String value = "";
   String rawData = "";
   uint16_t frequency = 38000;
   uint8_t bits = 32;
@@ -504,6 +559,16 @@ bool sendIRSignal(String fileName, int signalIdx) {
       } else if (line.startsWith("command:")) {
         command = line.substring(8);
         command.trim();
+      } else if (line.startsWith("value:")) {
+        value = line.substring(6);
+        value.trim();
+      } else if (line.startsWith("bits:")) {
+        bits = line.substring(5).toInt();
+      } else if (line.startsWith("frequency:")) {
+        frequency = line.substring(10).toInt();
+      } else if (line.startsWith("data:")) {
+        rawData = line.substring(5);
+        rawData.trim();
       }
     }
   }
@@ -514,31 +579,199 @@ bool sendIRSignal(String fileName, int signalIdx) {
     return false;
   }
 
-  if (parsedMode && protocol != "" && address != "" && command != "") {
+  auto parseHexStringToUint32LE = [](String str) -> uint32_t {
+    return static_cast<uint32_t>(parseHexBytesToUint64LE(str) & 0xFFFFFFFFULL);
+  };
+
+  if (parsedMode && protocol != "") {
+    protocol = normalizeProtocolName(protocol);
+    decode_type_t protocolType = strToDecodeType(protocol.c_str());
+    uint64_t fullValue = value.length() > 0 ? parseHexBytesToUint64LE(value) : 0;
+    uint16_t sendBits = bits > 0 ? bits : 0;
+
     if (protocol.equalsIgnoreCase("Samsung32")) {
-      uint8_t addressValue = strtoul(address.substring(0, 2).c_str(), nullptr, 16);
-      uint8_t commandValue = strtoul(command.substring(0, 2).c_str(), nullptr, 16);
-      uint64_t data = irsend.encodeSAMSUNG(addressValue, commandValue);
-      irsend.sendSAMSUNG(data, 32);
+      uint32_t addressValue = parseHexStringToUint32LE(address);
+      uint32_t commandValue = parseHexStringToUint32LE(command);
+      uint32_t data = (addressValue << 16) | commandValue;
+      Serial.print(F("Sending Samsung: 0x"));
+      Serial.println(data, HEX);
+      for (int i = 0; i < 3; i++) {
+        irsend.sendSAMSUNG(data, 32);
+        delay(50);
+      }
       return true;
+      
     } else if (protocol.equalsIgnoreCase("SONY")) {
-      uint8_t commandValue = strtoul(command.substring(0, 2).c_str(), nullptr, 16);
-      irsend.sendSony(commandValue, 12);
+      uint32_t commandValue = parseHexStringToUint32LE(command);
+      Serial.print(F("Sending Sony: 0x"));
+      Serial.println(commandValue, HEX);
+      irsend.sendSony(commandValue, bits > 0 ? bits : 12);
       return true;
+      
+    } else if (protocol.equalsIgnoreCase("NEC")) {
+      uint32_t necCode = 0;
+      
+      if (value.length() > 0) {
+        // Используем value если он сохранен
+        necCode = parseHexStringToUint32LE(value);
+      } else {
+        // Формируем из address и command с правильным порядком байт
+        uint32_t addressValue = parseHexStringToUint32LE(address);
+        uint32_t commandValue = parseHexStringToUint32LE(command);
+        
+        // Для NEC правильный порядок: command в старших 16 битах, address в младших
+        necCode = (commandValue << 16) | addressValue;
+      }
+      
+      Serial.print(F("Address bytes: ["));
+      Serial.print(address);
+      Serial.print(F("] -> 0x"));
+      Serial.println(parseHexStringToUint32LE(address), HEX);
+      
+      Serial.print(F("Command bytes: ["));
+      Serial.print(command);
+      Serial.print(F("] -> 0x"));
+      Serial.println(parseHexStringToUint32LE(command), HEX);
+      
+      Serial.print(F("Sending NEC code: 0x"));
+      Serial.println(necCode, HEX);
+      
+      // Отправляем несколько раз для надежности
+      for (int i = 0; i < 3; i++) {
+        irsend.sendNEC(necCode, 32);
+        delay(100);
+      }
+      return true;
+      
+    } else if (protocol.equalsIgnoreCase("EPSON")) {
+      uint32_t epsonCode = 0;
+
+      if (value.length() > 0) {
+        epsonCode = parseHexStringToUint32LE(value);
+      } else {
+        uint32_t addressValue = parseHexStringToUint32LE(address);
+        uint32_t commandValue = parseHexStringToUint32LE(command);
+        epsonCode = (commandValue << 16) | addressValue;
+      }
+
+      if (sendBits == 0) {
+        sendBits = 32;
+      }
+
+      Serial.print(F("Sending EPSON code: 0x"));
+      Serial.print(epsonCode, HEX);
+      Serial.print(F(" ("));
+      Serial.print(sendBits);
+      Serial.println(F(" bits)"));
+
+      irsend.sendEpson(epsonCode, sendBits);
+      return true;
+      
+    } else if (protocol.equalsIgnoreCase("RC6")) {
+    uint32_t rc6Code = 0;
+    int rc6Bits = bits;
+    
+    if (value.length() > 0) {
+        // Если есть value - используем его, но с осторожностью
+        rc6Code = parseHexStringToUint32LE(value);
+    } else {
+        // RC6 Mode 0: Control (8 бит) в битах 23-16, Command (8 бит) в битах 7-0
+        // address и command в файле - 4-байтовые, берем младший байт каждого
+        uint32_t addr = parseHexStringToUint32LE(address) & 0xFF;   // младший байт адреса
+        uint32_t cmd = parseHexStringToUint32LE(command) & 0xFF;    // младший байт команды
+        
+        // Формируем RC6 код по стандарту: Control << 16 | Command
+        rc6Code = (addr << 16) | cmd;
     }
+    
+    // RC6 Mode 0 обычно 20 или 24 бита (20 бит данных + заголовок)
+    if (rc6Bits == 0) {
+        rc6Bits = 20;  // стандартная битность для RC6 Mode 0
+    }
+    
+    Serial.print(F("Address (hex): "));
+    Serial.print(parseHexStringToUint32LE(address), HEX);
+    Serial.print(F(" -> extracted: 0x"));
+    Serial.println(parseHexStringToUint32LE(address) & 0xFF, HEX);
+    
+    Serial.print(F("Command (hex): "));
+    Serial.print(parseHexStringToUint32LE(command), HEX);
+    Serial.print(F(" -> extracted: 0x"));
+    Serial.println(parseHexStringToUint32LE(command) & 0xFF, HEX);
+    
+    Serial.print(F("Sending RC6 code: 0x"));
+    Serial.print(rc6Code, HEX);
+    Serial.print(F(" ("));
+    Serial.print(rc6Bits);
+    Serial.println(F(" bits)"));
+    
+    for (int i = 0; i < 3; i++) {
+        irsend.sendRC6(rc6Code, rc6Bits);
+        delay(60);
+    }
+    return true;
+	} else if (protocol.equalsIgnoreCase("RC5")) {
+     uint32_t rc5Code = 0;
+  
+    if (value.length() > 0) {
+      rc5Code = parseHexStringToUint32LE(value);
+    } else {
+      rc5Code = parseHexStringToUint32LE(command);
+    }
+  
+    // RC5 обычно 12 или 14 бит
+    int rc5Bits = bits;
+    if (rc5Bits == 0) {
+      rc5Bits = 12; // Стандарт RC5
+    }
+  
+    Serial.print(F("Sending RC5: 0x"));
+    Serial.print(rc5Code, HEX);
+    Serial.print(F(" ("));
+    Serial.print(rc5Bits);
+    Serial.println(F(" bits)"));
+  
+    // RC5 отправка
+    irsend.sendRC5(rc5Code, rc5Bits);
+    delay(50);
+    irsend.sendRC5(rc5Code, rc5Bits);
+    return true;
+  }
+
+    if (protocolType != decode_type_t::UNKNOWN) {
+      if (sendBits == 0) {
+        sendBits = IRsend::defaultBits(protocolType);
+      }
+
+      if (fullValue != 0 || value.length() > 0) {
+        Serial.print(F("Sending generic protocol "));
+        Serial.print(protocol);
+        Serial.print(F(" value: "));
+        Serial.print(uint64ToByteString(fullValue));
+        Serial.print(F(" ("));
+        Serial.print(sendBits);
+        Serial.println(F(" bits)"));
+        return irsend.send(protocolType, fullValue, sendBits);
+      }
+    }
+    
     Serial.print(F("Unsupported protocol: "));
     Serial.println(protocol);
     return false;
-  } else if (!parsedMode && rawData != "" && frequency != 0) {
+    
+  } else if (!parsedMode && rawData != "") {
+    // Отправка raw сигнала
     uint16_t dataBufferSize = 1;
     for (int i = 0; i < rawData.length(); i++) {
       if (rawData[i] == ' ') dataBufferSize++;
     }
+    
     uint16_t* dataBuffer = (uint16_t*)malloc(dataBufferSize * sizeof(uint16_t));
     if (!dataBuffer) {
       Serial.println(F("Failed to allocate memory for IR data"));
       return false;
     }
+    
     uint16_t count = 0;
     String data = rawData;
     while (data.length() > 0 && count < dataBufferSize) {
@@ -548,10 +781,16 @@ bool sendIRSignal(String fileName, int signalIdx) {
       data.remove(0, delimiterIndex + 1);
       dataBuffer[count++] = dataChunk.toInt();
     }
+    
+    Serial.print(F("Sending raw data: "));
+    Serial.print(count);
+    Serial.println(F(" pulses"));
+    
     irsend.sendRaw(dataBuffer, count, frequency);
     free(dataBuffer);
     return true;
   }
+  
   Serial.println(F("Invalid IR signal format"));
   return false;
 }
@@ -572,6 +811,8 @@ String parseRawSignal() {
 void appendToDeviceContent(String btn_name) {
   strDeviceContent += "name: " + btn_name + "\n";
   strDeviceContent += "type: parsed\n";
+  bool saveBits = false;
+  bool saveValue = false;
   switch (results.decode_type) {
     case decode_type_t::SAMSUNG: {
       strDeviceContent += "protocol: Samsung32\n";
@@ -579,12 +820,28 @@ void appendToDeviceContent(String btn_name) {
     }
     case decode_type_t::SONY: {
       strDeviceContent += "protocol: SONY\n";
+      saveBits = true;
+      saveValue = true;
       break;
     }
     case decode_type_t::NEC: {
       strDeviceContent += "protocol: NEC\n";
+      saveBits = true;
+      saveValue = true;
       break;
     }
+    case decode_type_t::RC6: {
+	  strDeviceContent += "protocol: RC6\n";
+      saveBits = true;
+      saveValue = true;
+      break;
+	}
+	case decode_type_t::RC5: {
+      strDeviceContent += "protocol: RC5\n";
+      saveBits = true;
+      saveValue = true;
+	  break;
+	}
     case decode_type_t::UNKNOWN: {
       strDeviceContent += "type: raw\n";
       strDeviceContent += "frequency: " + String(IR_FREQUENCY) + "\n";
@@ -593,9 +850,17 @@ void appendToDeviceContent(String btn_name) {
       return;
     }
     default: {
-      strDeviceContent += "protocol: " + typeToString(results.decode_type, results.repeat) + "\n";
+      strDeviceContent += "protocol: " + normalizeProtocolName(typeToString(results.decode_type, results.repeat)) + "\n";
+      saveBits = true;
+      saveValue = true;
       break;
     }
+  }
+  if (saveBits && results.bits > 0) {
+    strDeviceContent += "bits: " + String(results.bits) + "\n";
+  }
+  if (saveValue) {
+    strDeviceContent += "value: " + uint64ToByteString(results.value) + "\n";
   }
   strDeviceContent += "address: " + uint32ToString(results.address) + "\n";
   strDeviceContent += "command: " + uint32ToString(results.command) + "\n";
