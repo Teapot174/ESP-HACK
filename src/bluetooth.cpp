@@ -358,7 +358,6 @@ static void ensureBleHidInited(BLEHidMode mode) {
   gHid->setHidInfo(0x00, 0x01);
   gHid->setReportMap((uint8_t*)compositeHidReportDescriptor, sizeof(compositeHidReportDescriptor));
   gHid->setBatteryLevel(100);
-  gHid->startServices();
 
   gAdv = NimBLEDevice::getAdvertising();
   NimBLEAdvertisementData advData;
