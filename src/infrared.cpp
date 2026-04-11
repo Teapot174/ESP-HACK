@@ -144,6 +144,9 @@ uint16_t raw_data_len = 0;
 #define IR_FREQUENCY 38000
 #define DUTY_CYCLE 0.330000
 unsigned long customSendLastTime = 0;
+uint8_t customSendRepeatCount = 0;
+const unsigned long CUSTOM_SEND_REPEAT_DELAY_MS = 120;
+const uint8_t CUSTOM_SEND_REPEAT_LIMIT = 2;
 
 void initIR() {
   irsend.begin();
@@ -595,10 +598,7 @@ bool sendIRSignal(String fileName, int signalIdx) {
       uint32_t data = (addressValue << 16) | commandValue;
       Serial.print(F("Sending Samsung: 0x"));
       Serial.println(data, HEX);
-      for (int i = 0; i < 3; i++) {
-        irsend.sendSAMSUNG(data, 32);
-        delay(50);
-      }
+      irsend.sendSAMSUNG(data, 32);
       return true;
       
     } else if (protocol.equalsIgnoreCase("SONY")) {
@@ -636,11 +636,7 @@ bool sendIRSignal(String fileName, int signalIdx) {
       Serial.print(F("Sending NEC code: 0x"));
       Serial.println(necCode, HEX);
       
-      // Отправляем несколько раз для надежности
-      for (int i = 0; i < 3; i++) {
-        irsend.sendNEC(necCode, 32);
-        delay(100);
-      }
+      irsend.sendNEC(necCode, 32);
       return true;
       
     } else if (protocol.equalsIgnoreCase("EPSON")) {
@@ -705,10 +701,7 @@ bool sendIRSignal(String fileName, int signalIdx) {
     Serial.print(rc6Bits);
     Serial.println(F(" bits)"));
     
-    for (int i = 0; i < 3; i++) {
-        irsend.sendRC6(rc6Code, rc6Bits);
-        delay(60);
-    }
+    irsend.sendRC6(rc6Code, rc6Bits);
     return true;
 	} else if (protocol.equalsIgnoreCase("RC5")) {
      uint32_t rc5Code = 0;
@@ -731,9 +724,6 @@ bool sendIRSignal(String fileName, int signalIdx) {
     Serial.print(rc5Bits);
     Serial.println(F(" bits)"));
   
-    // RC5 отправка
-    irsend.sendRC5(rc5Code, rc5Bits);
-    delay(50);
     irsend.sendRC5(rc5Code, rc5Bits);
     return true;
   }
@@ -977,6 +967,7 @@ void handleIRSubmenu() {
         state = SENDING_IR;
         irAbortRequested = false;
         customSendLastTime = 0;
+        customSendRepeatCount = 0;
         sendStartTime = millis();
         Serial.print(F("Starting IR-Send for signal: "));
         Serial.println(irSelectedSignal);
@@ -1050,25 +1041,38 @@ void handleIRSubmenu() {
     } else if (irMenuIndex == 0) {
       if (buttonBack.isClick()) {
         state = IR_SELECTION;
+        customSendRepeatCount = 0;
         display.clearDisplay();
         displayIRSelection(irMenuIndex, irSelectedSignal);
         return;
       }
       if (buttonOK.isClick()) {
+        customSendLastTime = 0;
+        customSendRepeatCount = 0;
         sendStartTime = millis();
         drawSendingScreen(0);
       }
       if (currentMillis - sendStartTime >= 2000) {
         state = IR_SELECTION;
+        customSendRepeatCount = 0;
         display.clearDisplay();
         displayIRSelection(irMenuIndex, irSelectedSignal);
         return;
       }
-      if (currentMillis - customSendLastTime >= 15) {
+      if (customSendRepeatCount < CUSTOM_SEND_REPEAT_LIMIT &&
+          (customSendLastTime == 0 || currentMillis - customSendLastTime >= CUSTOM_SEND_REPEAT_DELAY_MS)) {
         customSendLastTime = currentMillis;
         if (sendIRSignal(irExplorer.selectedFile, irSignalIndex)) {
+          customSendRepeatCount++;
           Serial.print(F("IR signal sent: "));
           Serial.println(irSelectedSignal);
+          if (customSendRepeatCount >= CUSTOM_SEND_REPEAT_LIMIT) {
+            state = IR_SELECTION;
+            customSendRepeatCount = 0;
+            display.clearDisplay();
+            displayIRSelection(irMenuIndex, irSelectedSignal);
+            return;
+          }
           drawSendingScreen(0);
         } else {
           Serial.println(F("Failed to send IR signal"));
