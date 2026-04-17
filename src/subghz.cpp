@@ -283,6 +283,7 @@ void runSubGHz() {
           memset(&keyData1, 0, sizeof(tpKeyData));
           lastSavedKey = 0;
           rcswitch.resetAvailable();
+          resetButtonStates();
           OLED_printWaitingSignal();
         } else if (menuIndex == 1) {
           menuState = menuTransmit;
@@ -296,14 +297,17 @@ void runSubGHz() {
           rcswitch.disableReceive();
           analyzerInit();
           analyzerExitRequested = false;
+          resetButtonStates();
           OLED_printAnalyzer();
         } else if (menuIndex == 3) {
           menuState = menuJammer;
           isJamming = false;
+          resetButtonStates();
           OLED_printJammer();
         } else if (menuIndex == 4) {
           menuState = menuBruteforce;
           bruteRunning = false;
+          resetButtonStates();
           OLED_printBruteIntro();
         } else if (menuIndex == 5) {
           menuState = menuRawRecorder;
