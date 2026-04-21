@@ -1,6 +1,7 @@
 #include "subghz.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
+#include "interface.h"
 #include "display.h"
 #include <SD.h>
 #include <SPI.h>
@@ -274,6 +275,10 @@ void runSubGHz() {
       }
       if (buttonOK.isClick()) {
         if (menuIndex == 0) {
+          if (!ensureSDReadyInteractive(true)) {
+            OLED_printSubGHzMenu(display, menuIndex);
+            continue;
+          }
           menuState = menuReceive;
           setupCC1101();
           rcswitch.disableReceive();
@@ -286,6 +291,10 @@ void runSubGHz() {
           resetButtonStates();
           OLED_printWaitingSignal();
         } else if (menuIndex == 1) {
+          if (!ensureSDReadyInteractive(true)) {
+            OLED_printSubGHzMenu(display, menuIndex);
+            continue;
+          }
           menuState = menuTransmit;
           ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
           ExplorerLoad(subExplorer, subExplorerCfg);
@@ -310,6 +319,10 @@ void runSubGHz() {
           resetButtonStates();
           OLED_printBruteIntro();
         } else if (menuIndex == 5) {
+          if (!ensureSDReadyInteractive(true)) {
+            OLED_printSubGHzMenu(display, menuIndex);
+            continue;
+          }
           menuState = menuRawRecorder;
           setupCC1101();
           rawRecorderRunning = false;
@@ -359,7 +372,7 @@ void runSubGHz() {
           lastSavedKey = 0;
           rcswitch.resetAvailable();
         } else {
-          OLED_printError(F("Key not saved"), true);
+          ExplorerShowSDError(display);
           Serial.println(F("Failed to save key to SD"));
         }
         OLED_printWaitingSignal();
@@ -433,8 +446,7 @@ void runSubGHz() {
           if (startRawRecorderSession()) {
             rawRecorderRunning = true;
           } else {
-            OLED_printError(F("RAW file open fail"), true);
-            delay(700);
+            ExplorerShowSDError(display, 700);
           }
         } else {
           stopRawRecorderSession(true, false);
@@ -467,8 +479,7 @@ void runSubGHz() {
         if (loadKeyFromSD(subExplorer.selectedFile, &keyData1)) {
           OLED_printKey(&keyData1, subExplorer.selectedFile);
         } else {
-          OLED_printError(F("Failed to load file"), true);
-          delay(1000);
+          ExplorerShowSDError(display);
           subExplorer.inExplorer = true;
           ExplorerDraw(subExplorer, display);
         }
@@ -780,6 +791,7 @@ void read_raw(tpKeyData* kd) {
 void OLED_printWaitingSignal() {
   display.clearDisplay();
   display.drawBitmap(0, 4, image_DolphinReceive_bits, 97, 61, SH110X_WHITE);
+  display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
   display.setCursor(65, 38);
@@ -794,6 +806,7 @@ void OLED_printWaitingSignal() {
 void OLED_printRawRecorder() {
   display.clearDisplay();
   display.drawBitmap(0, 4, image_DolphinReceive_bits, 97, 61, SH110X_WHITE);
+  display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
   display.setCursor(72, 13);

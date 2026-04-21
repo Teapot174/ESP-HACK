@@ -48,6 +48,8 @@ void ExplorerLoad(ExplorerState& state, const ExplorerConfig& cfg);
 void ExplorerDraw(const ExplorerState& state, DisplayType& display);
 void ExplorerDrawDeleteConfirm(const ExplorerState& state, DisplayType& display);
 void ExplorerDrawSaveResult(DisplayType& display);
+void ExplorerDrawSDError(DisplayType& display);
+void ExplorerShowSDError(DisplayType& display, unsigned long delayMs = 1000);
 ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, DisplayType& display,
                               bool upClick, bool downClick, bool okClick, bool backClick, bool backHold);
 

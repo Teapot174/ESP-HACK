@@ -1,12 +1,14 @@
 #include "menu/gpio.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
+#include "interface.h"
 #include "CONFIG.h"
 #include "display.h"
 #include <GyverButton.h>
 #include <SPI.h>
 #include <RF24.h>
 #include <SD.h>
+#include <EEPROM.h>
 #include <OneWire.h>
 
 extern DisplayType display;
@@ -24,7 +26,6 @@ byte nrf24MenuIndex = 0, nrf24ConfigIndex = 0, jammingModeIndex = 0;
 const char* nrf24MenuItems[] = {"Jammer", "Spectrum", "Config"};
 const char* jammingModes[] = {"WiFi", "BLE", "BT", "USB", "Video", "RadioCH", "ALL"};
 const byte NRF24_MENU_ITEM_COUNT = 3, JAMMING_MODE_COUNT = 7;
-const char* NRF24_CONFIG_PATH = "/GPIO/NRF24.cfg";
 
 // Spectrum Analyzer
 #define SPECTRUM_CHANNELS 128
@@ -35,8 +36,21 @@ const unsigned long SPECTRUM_UPDATE_INTERVAL = 25; // 1000/25 ГЦ
 
 // NRF24 pins
 struct NRF24Config {
-  byte cePin = GPIO_A, csnPin = GPIO_B, mosiPin = GPIO_C, misoPin = GPIO_D, sckPin = GPIO_E;
+  byte cePin = GPIO_A, csnPin = GPIO_B, sckPin = GPIO_C, mosiPin = GPIO_D, misoPin = GPIO_E;
 } nrf24Config;
+
+struct StoredNRF24Config {
+  uint32_t signature;
+  byte cePin;
+  byte csnPin;
+  byte mosiPin;
+  byte misoPin;
+  byte sckPin;
+};
+
+static const uint32_t NRF24_CONFIG_SIGNATURE = 0x4E524632UL;
+static const int GPIO_EEPROM_SIZE = sizeof(StoredNRF24Config);
+static bool gpioStorageReady = false;
 
 // Pins
 const byte availablePins[] = {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
@@ -73,6 +87,7 @@ byte iButtonType = 0x00;
 uint8_t iButtonBits = 64;
 bool iButtonWasPresent = false;
 bool iButtonCrcOk = false;
+bool inGPIOPlaceholder = false;
 
 static const char* iButtonExts[] = {".ibtn"};
 ExplorerEntry iButtonFileList[IBUTTON_MAX_FILES];
@@ -87,6 +102,47 @@ byte usb_channels[] = {40, 50, 60};
 byte video_channels[] = {70, 75, 80};
 byte rc_channels[] = {1, 3, 5, 7};
 byte full_channels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100};
+
+bool ensureGPIOStorageReady() {
+  if (gpioStorageReady) return true;
+  gpioStorageReady = EEPROM.begin(GPIO_EEPROM_SIZE);
+  if (!gpioStorageReady) {
+    Serial.println(F("GPIO storage init failed"));
+  }
+  return gpioStorageReady;
+}
+
+bool isAvailablePin(byte pin) {
+  for (byte i = 0; i < AVAILABLE_PINS_COUNT; i++) {
+    if (availablePins[i] == pin) return true;
+  }
+  return false;
+}
+
+void setDefaultNRF24Config() {
+  nrf24Config.cePin = GPIO_A;
+  nrf24Config.csnPin = GPIO_B;
+  nrf24Config.sckPin = GPIO_C;
+  nrf24Config.mosiPin = GPIO_D;
+  nrf24Config.misoPin = GPIO_E;
+}
+
+bool validateStoredNRF24Config(const StoredNRF24Config& stored) {
+  return stored.signature == NRF24_CONFIG_SIGNATURE &&
+         isAvailablePin(stored.cePin) &&
+         isAvailablePin(stored.csnPin) &&
+         isAvailablePin(stored.mosiPin) &&
+         isAvailablePin(stored.misoPin) &&
+         isAvailablePin(stored.sckPin);
+}
+
+void applyStoredNRF24Config(const StoredNRF24Config& stored) {
+  nrf24Config.cePin = stored.cePin;
+  nrf24Config.csnPin = stored.csnPin;
+  nrf24Config.mosiPin = stored.mosiPin;
+  nrf24Config.misoPin = stored.misoPin;
+  nrf24Config.sckPin = stored.sckPin;
+}
 
 void runSpectrumAnalyzer() {
   if (!inSpectrumAnalyzer) return;
@@ -146,68 +202,46 @@ void runSpectrumAnalyzer() {
 }
 
 void saveNRF24Config() {
-  if (!SD.begin(SD_CS, sdSPI)) {
-    Serial.println(F("SD init failed"));
+  if (!ensureGPIOStorageReady()) {
     return;
   }
-  if (!SD.exists("/GPIO")) SD.mkdir("/GPIO");
-  SD.remove(NRF24_CONFIG_PATH);
-  File file = SD.open(NRF24_CONFIG_PATH, FILE_WRITE);
-  if (file) {
-    const char* labels[] = {"CE=", "CSN=", "MOSI=", "MISO=", "SCK="};
-    byte* pins[] = {&nrf24Config.cePin, &nrf24Config.csnPin, &nrf24Config.mosiPin, &nrf24Config.misoPin, &nrf24Config.sckPin};
-    for (byte i = 0; i < 5; i++) {
-      for (byte j = 0; j < AVAILABLE_PINS_COUNT; j++) {
-        if (*pins[i] == availablePins[j]) {
-          file.print(labels[i]);
-          file.println(pinNames[j]);
-          break;
-        }
-      }
-    }
-    file.close();
+
+  StoredNRF24Config stored = {
+    NRF24_CONFIG_SIGNATURE,
+    nrf24Config.cePin,
+    nrf24Config.csnPin,
+    nrf24Config.mosiPin,
+    nrf24Config.misoPin,
+    nrf24Config.sckPin
+  };
+  EEPROM.put(0, stored);
+  if (EEPROM.commit()) {
     Serial.println(F("NRF24 config saved"));
   } else {
     Serial.println(F("Error saving NRF24 config"));
   }
 }
 
-bool loadNRF24ConfigFromFile(const char* path) {
-  File file = SD.open(path, FILE_READ);
-  if (!file) return false;
-  while (file.available()) {
-    String line = file.readStringUntil('\n');
-    line.trim();
-    byte* pin = nullptr;
-    byte offset = 0;
-    if (line.startsWith("CE=")) { pin = &nrf24Config.cePin; offset = 3; }
-    else if (line.startsWith("CSN=")) { pin = &nrf24Config.csnPin; offset = 4; }
-    else if (line.startsWith("MOSI=")) { pin = &nrf24Config.mosiPin; offset = 5; }
-    else if (line.startsWith("MISO=")) { pin = &nrf24Config.misoPin; offset = 5; }
-    else if (line.startsWith("SCK=")) { pin = &nrf24Config.sckPin; offset = 4; }
-    if (pin) {
-      String pinName = line.substring(offset);
-      for (byte i = 0; i < AVAILABLE_PINS_COUNT; i++) {
-        if (pinName == pinNames[i]) {
-          *pin = availablePins[i];
-          break;
-        }
-      }
-    }
-  }
-  file.close();
-  Serial.print(F("NRF24 config loaded from "));
-  Serial.println(path);
-  return true;
-}
-
 void loadNRF24Config() {
-  if (!SD.begin(SD_CS, sdSPI)) {
-    Serial.println(F("SD init failed"));
+  setDefaultNRF24Config();
+  if (!ensureGPIOStorageReady()) {
     return;
   }
-  if (loadNRF24ConfigFromFile(NRF24_CONFIG_PATH)) return;
-  Serial.println(F("No NRF24 config, using defaults"));
+
+  StoredNRF24Config stored;
+  EEPROM.get(0, stored);
+  if (validateStoredNRF24Config(stored)) {
+    applyStoredNRF24Config(stored);
+    Serial.println(F("NRF24 config loaded from device"));
+    return;
+  }
+
+  Serial.println(F("No NRF24 config in device, using defaults"));
+}
+
+void resetGPIOConfigToDefaults() {
+  setDefaultNRF24Config();
+  saveNRF24Config();
 }
 
 void displayNRF24Menu(int previousIndex = -1) {
@@ -645,6 +679,21 @@ void displayIButtonWriteWaiting() {
   display.display();
 }
 
+void displayGPIOPlaceholder() {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setTextSize(2);
+  display.setCursor(10, 8);
+  display.print(gpioMenuItems[gpioMenuIndex]);
+  display.setTextSize(1);
+  display.setCursor(10, 34);
+  display.print(F("Coming soon"));
+  display.setCursor(10, 50);
+  display.print(F("Back to return"));
+  display.display();
+}
+
 
 bool saveIButtonToSD() {
   if (!SD.begin(SD_CS, sdSPI)) {
@@ -819,6 +868,8 @@ void handleIButtonSubmenu() {
         display.print("Saved");
         display.display();
         delay(1000);
+      } else {
+        ExplorerShowSDError(display);
       }
       iButtonState = IBUTTON_READ_WAIT;
       displayIButtonReadWaiting();
@@ -848,12 +899,7 @@ void handleIButtonSubmenu() {
         iButtonState = IBUTTON_WRITE_WAIT;
         displayIButtonWriteWaiting();
       } else {
-        display.clearDisplay();
-        display.setTextSize(1);
-        display.setCursor(1, 1);
-        display.println(F("Load failed"));
-        display.display();
-        delay(1000);
+        ExplorerShowSDError(display);
         ExplorerDraw(iButtonExplorer, display);
       }
     } else if (action == EXPLORER_EXIT) {
@@ -897,6 +943,13 @@ void handleGPIOSubmenu() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+  if (inGPIOPlaceholder) {
+    if (buttonOK.isClick() || buttonBack.isClick()) {
+      inGPIOPlaceholder = false;
+      displayGPIOMenu(display, gpioMenuIndex);
+    }
+    return;
+  }
   if (isMenuButtonPress(BUTTON_UP, upHeld)) {
     byte previousIndex = gpioMenuIndex;
     gpioMenuIndex = (gpioMenuIndex - 1 + GPIO_MENU_ITEM_COUNT) % GPIO_MENU_ITEM_COUNT;
@@ -911,6 +964,10 @@ void handleGPIOSubmenu() {
     Serial.printf("GPIO option: %s\n", gpioMenuItems[gpioMenuIndex]);
     switch (gpioMenuIndex) {
       case 0:
+        if (!ensureSDReadyInteractive(true)) {
+          displayGPIOMenu(display, gpioMenuIndex);
+          return;
+        }
         inIButtonSubmenu = true;
         iButtonState = IBUTTON_MENU;
         iButtonMenuIndex = 0;
@@ -923,15 +980,13 @@ void handleGPIOSubmenu() {
         displayNRF24Menu();
         break;
       case 2:
-        display.clearDisplay();
-        display.setTextSize(1);
-        display.setCursor(1, 1);
-        display.println(F("In development..."));
-        display.display();
+        inGPIOPlaceholder = true;
+        displayGPIOPlaceholder();
         break;
     }
   }
   if (buttonBack.isClick()) {
+    inGPIOPlaceholder = false;
     returnToMainMenu();
     Serial.println(F("Back to main menu"));
   }

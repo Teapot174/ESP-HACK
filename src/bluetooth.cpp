@@ -3,6 +3,7 @@
 #include "CONFIG.h"
 #include <SD.h>
 #include "Explorer.h"
+#include "interface.h"
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
@@ -994,6 +995,10 @@ void handleBluetoothSubmenu() {
       }
       if (buttonOK.isClick()) {
         if (bluetoothMenuIndex == 3) {
+          if (!ensureSDReadyInteractive(true)) {
+            displayBluetoothMenu(display, bluetoothMenuIndex);
+            return;
+          }
           inBadBLE = true;
           inMouseMenu = false;
           explorerLoaded = false;

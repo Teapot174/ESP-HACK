@@ -6,6 +6,7 @@
 #include <DNSServer.h>
 #include <SD.h>
 #include "Explorer.h"
+#include "interface.h"
 #include "CONFIG.h"
 #include "menu/wifi.h"
 #include "deauth.h"
@@ -1032,11 +1033,7 @@ void handleWiFiSubmenu() {
           inPortalExplorer = false;
           startEvilPortal();
         } else {
-          display.clearDisplay();
-          display.setCursor(1, 20);
-          display.println(F("Load failed!"));
-          display.display();
-          delay(1500);
+          ExplorerShowSDError(display, 1500);
           ExplorerDraw(portalExplorer, display);
         }
       } else if (action == EXPLORER_EXIT) {
@@ -1082,6 +1079,10 @@ void handleWiFiSubmenu() {
   }
 
   if (inFunctionSelection && okClick && wifiMenuIndex == 2) {
+    if (!ensureSDReadyInteractive(true)) {
+      displayWiFiMenu(display, wifiMenuIndex);
+      return;
+    }
     inEvilPortal = true;
     inPortalExplorer = true;
     ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
@@ -1132,12 +1133,20 @@ void handleWiFiSubmenu() {
         }
       }
     } else if (wifiMenuIndex == 2) {
+      if (!ensureSDReadyInteractive(true)) {
+        displayWiFiMenu(display, wifiMenuIndex);
+        return;
+      }
       inEvilPortal = true;
       inPortalExplorer = true;
       ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
       loadPortalFileList();
       drawPortalExplorer();
     } else if (wifiMenuIndex == 3) {
+      if (!ensureSDReadyInteractive(true)) {
+        displayWiFiMenu(display, wifiMenuIndex);
+        return;
+      }
       inWardriving = true;
       displayWardrivingPrompt();
     } else if (wifiMenuIndex == 4) {

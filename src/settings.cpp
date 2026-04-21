@@ -1,5 +1,6 @@
 #include "display.h"
 #include <GyverButton.h>
+#include <esp_system.h>
 #include "CONFIG.h"
 #include "menu/settings.h"
 
@@ -21,6 +22,7 @@ extern const char* colorOptions[];
 extern const byte COLOR_OPTION_COUNT;
 extern void applyColorScheme();
 extern void saveConfig();
+extern void resetToFactoryDefaults();
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 extern void resetActivityTimer();
 
@@ -146,6 +148,11 @@ void enterSettingsDetail(byte menuIndex) {
     standbyNeedRedraw = true;
     renderStandbySetting(standbySelectionIndex);
   } else if (menuIndex == 2) {
+    ESP.restart();
+  } else if (menuIndex == 3) {
+    resetToFactoryDefaults();
+    ESP.restart();
+  } else if (menuIndex == 4) {
     currentDetail = SETTINGS_ABOUT;
     aboutNeedRedraw = true;
     renderAboutSetting();

@@ -6,6 +6,7 @@
 #include <IRsend.h>
 #include <IRutils.h>
 #include "CONFIG.h"
+#include "interface.h"
 #include "menu/infrared.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
@@ -494,14 +495,14 @@ void drawSignalSubmenu() {
 }
 
 
-void loadIRSignals(String fileName) {
+bool loadIRSignals(String fileName) {
   ensureIrExplorerDir();
   irSignalCount = 0;
   File file = SD.open(irExplorer.currentDir + "/" + fileName, FILE_READ);
   if (!file) {
     Serial.print(F("Failed to open file for signals: "));
     Serial.println(fileName);
-    return;
+    return false;
   }
 
   String signalName = "";
@@ -520,6 +521,7 @@ void loadIRSignals(String fileName) {
   Serial.print(irSignalCount);
   Serial.print(F(" signals in "));
   Serial.println(fileName);
+  return true;
 }
 
 bool sendIRSignal(String fileName, int signalIdx) {
@@ -1125,12 +1127,16 @@ void handleIRSubmenu() {
     if (action == EXPLORER_SELECT_FILE) {
       irSignalIndex = 0;
       irSignalCount = 0;
-      loadIRSignals(irExplorer.selectedFile);
-      state = IR_SIGNAL_SUBMENU;
-      display.clearDisplay();
-      drawSignalSubmenu();
-      Serial.print(F("Selected IR file: "));
-      Serial.println(irExplorer.selectedFile);
+      if (loadIRSignals(irExplorer.selectedFile)) {
+        state = IR_SIGNAL_SUBMENU;
+        display.clearDisplay();
+        drawSignalSubmenu();
+        Serial.print(F("Selected IR file: "));
+        Serial.println(irExplorer.selectedFile);
+      } else {
+        ExplorerShowSDError(display);
+        ExplorerDraw(irExplorer, display);
+      }
     } else if (action == EXPLORER_EXIT) {
       inIRMenu = false;
       state = MENU;
@@ -1170,13 +1176,7 @@ void handleIRSubmenu() {
           drawReadingScreen();
           Serial.println(F("IR signal saved"));
         } else {
-          display.clearDisplay();
-          display.setTextColor(SH110X_WHITE);
-          display.setTextWrap(false);
-          display.setCursor(1, 1);
-          display.print(F("Failed to save"));
-          display.display();
-          delay(1000);
+          ExplorerShowSDError(display);
           readSignal = false;
           irrecv.resume();
           drawReadingScreen();
@@ -1228,6 +1228,11 @@ void handleIRSubmenu() {
     if (buttonOK.isClick()) {
       switch (irMenuIndex) {
         case 0: // IR-Send
+          if (!ensureSDReadyInteractive(true)) {
+            displayIRMenu(display, irMenuIndex);
+            display.display();
+            break;
+          }
           state = IR_FILE_EXPLORER;
           ExplorerInit(irExplorer, irFileList, MAX_FILES, irExplorerCfg);
           ExplorerLoad(irExplorer, irExplorerCfg);
@@ -1235,6 +1240,11 @@ void handleIRSubmenu() {
           ExplorerDraw(irExplorer, display);
           break;
         case 1: // IR-Read
+          if (!ensureSDReadyInteractive(true)) {
+            displayIRMenu(display, irMenuIndex);
+            display.display();
+            break;
+          }
           state = IR_READING;
           readSignal = false;
           signalsRead = 0;

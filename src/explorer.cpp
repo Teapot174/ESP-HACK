@@ -301,6 +301,28 @@ void ExplorerDrawSaveResult(DisplayType& display) {
   display.display();
 }
 
+void ExplorerDrawSDError(DisplayType& display) {
+  display.clearDisplay();
+  display.setTextColor(1);
+  display.setTextSize(2);
+  display.setTextWrap(false);
+  display.setCursor(23, 14);
+  display.print("SD CARD");
+  display.setCursor(35, 34);
+  display.print("ERROR");
+  display.display();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+}
+
+void ExplorerShowSDError(DisplayType& display, unsigned long delayMs) {
+  ExplorerDrawSDError(display);
+  if (delayMs > 0) {
+    delay(delayMs);
+  }
+}
+
 static bool explorerDeleteSelected(const ExplorerState& state) {
   if (state.count == 0) return false;
   String filePath = state.currentDir + "/" + state.list[state.index].name;
@@ -320,8 +342,9 @@ static void explorerShowDeleteResult(DisplayType& display, bool ok) {
     display.setCursor(84, 15);
     display.print(F("Deleted"));
   } else {
-    display.setCursor(1, 1);
-    display.print(F("Failed to delete"));
+    ExplorerDrawSDError(display);
+    delay(1000);
+    return;
   }
   display.display();
   delay(1000);
