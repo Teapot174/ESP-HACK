@@ -100,7 +100,7 @@ constexpr byte TETRIS_SCORE_X = 7;
 constexpr byte TETRIS_SCORE_Y = 4;
 constexpr byte TETRIS_NEXT_LABEL_X = 40;
 constexpr byte TETRIS_NEXT_LABEL_Y = 4;
-constexpr byte TETRIS_NEXT_PIECE_X = 53;
+constexpr byte TETRIS_NEXT_PIECE_X = 45;
 constexpr byte TETRIS_NEXT_PIECE_Y = 4;
 constexpr byte TETRIS_TYPES = 6;
 constexpr uint16_t TETRIS_INITIAL_DROP_MS = 420;
@@ -630,7 +630,7 @@ void tetrisRenderFrame() {
   display.drawLine(0, TETRIS_HEADER_LINE_Y, display.width(), TETRIS_HEADER_LINE_Y, SH110X_WHITE);
   display.drawRect(0, 0, display.width(), display.height(), SH110X_WHITE);
   display.drawRect(TETRIS_MARGIN_LEFT - 1, TETRIS_MARGIN_TOP - 1,
-                   TETRIS_BOARD_PIXEL_WIDTH + 2, TETRIS_BOARD_PIXEL_HEIGHT + 2, SH110X_WHITE);
+                   TETRIS_BOARD_PIXEL_WIDTH + 1, TETRIS_BOARD_PIXEL_HEIGHT + 2, SH110X_WHITE);
 
   for (byte x = 0; x < TETRIS_BOARD_WIDTH; x++) {
     for (byte y = 0; y < TETRIS_BOARD_HEIGHT; y++) {
