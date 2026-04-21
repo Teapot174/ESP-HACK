@@ -65,11 +65,19 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Spectrum
 - Config
 
-**Serial *(in development)***
+**PN532 *(in development)***
+
+### Games
+- Snake
+- Flappy Bird
+- Ping Pong
+- Tetris
 
 ### Settings
 - Цвет дисплея
-- Время режима ожидания
+- Режим ожидания
+- Перезагрузка
+- Сброс
 - О прошивке
 
 ---
