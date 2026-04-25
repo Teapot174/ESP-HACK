@@ -152,8 +152,8 @@ const int appleDevicesCount = sizeof(appleDevices) / sizeof(appleDevices[0]);
 void generateRandomMac(uint8_t *mac) {
     for (int i = 0; i < 6; i++) {
         mac[i] = random(256);
-        if (i == 0) { mac[i] |= 0xF0; }
     }
+    mac[5] |= 0xC0;
 }
 
 BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
@@ -227,24 +227,26 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
 }
 
 void executeSpam(EBLEPayloadType type) {
-    uint8_t macAddr[6];
-    generateRandomMac(macAddr);
-    esp_base_mac_addr_set(macAddr);
-
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     if (!pAdvertising) {
         return;
     }
 
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, MAX_TX_POWER);
-    BLEAdvertisementData advertisementData = GetUniversalAdvertisementData(type);
-    BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
-
     if (pAdvertising->isAdvertising()) {
         pAdvertising->stop();
     }
 
+    uint8_t macAddr[6];
+    generateRandomMac(macAddr);
+    
+    NimBLEDevice::setOwnAddr(macAddr);
+
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, MAX_TX_POWER);
+    BLEAdvertisementData advertisementData = GetUniversalAdvertisementData(type);
+    BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+
     pAdvertising->setAdvertisementData(advertisementData);
     pAdvertising->setScanResponseData(oScanResponseData);
+    
     pAdvertising->start();
 }

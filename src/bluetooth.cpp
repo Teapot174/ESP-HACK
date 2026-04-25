@@ -1047,6 +1047,7 @@ void handleBluetoothSubmenu() {
             stopBLE();
           }
           BLEDevice::init(bleDeviceName);
+          BLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
           lastSpamTime = 0;
           deviceIndex = 0;
           clearBLESpamLog();
