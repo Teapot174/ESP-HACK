@@ -19,7 +19,6 @@ extern SPIClass sdSPI;
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 
 // NRF24
-RF24 radio(CC1101_CS, CC1101_GDO0);
 SPIClass *NRFSPI = &SPI;
 bool inNRF24Submenu = false, inJammingMenu = false, inJammingActive = false, inNRF24Config = false;
 byte nrf24MenuIndex = 0, nrf24ConfigIndex = 0, jammingModeIndex = 0;
@@ -38,6 +37,7 @@ const unsigned long SPECTRUM_UPDATE_INTERVAL = 25; // 1000/25 ГЦ
 struct NRF24Config {
   byte cePin = GPIO_A, csnPin = GPIO_B, sckPin = GPIO_C, mosiPin = GPIO_D, misoPin = GPIO_E;
 } nrf24Config;
+RF24 radio(nrf24Config.cePin, nrf24Config.csnPin, 16000000);
 
 struct StoredNRF24Config {
   uint32_t signature;
@@ -325,36 +325,39 @@ bool initializeNRF24() {
 }
 
 void startNRFJamming() {
-  radio.setPALevel(RF24_PA_MAX);
-  if (!radio.setDataRate(RF24_2MBPS)) Serial.println(F("Data rate fail"));
+  radio.stopListening();
+  radio.setAutoAck(false);
+  radio.setRetries(0, 0);
+  radio.setPayloadSize(5); 
   radio.setAddressWidth(3);
-  radio.setPayloadSize(2);
-  radio.startConstCarrier(RF24_PA_MAX, 45);
-  byte* channels;
-  byte channel_count;
-  switch (jammingModeIndex) {
-    case 0: channels = wifi_channels; channel_count = sizeof(wifi_channels); Serial.println(F("WiFi jamming")); break;
-    case 1: channels = ble_channels; channel_count = sizeof(ble_channels); Serial.println(F("BLE jamming")); break;
-    case 2: channels = bluetooth_channels; channel_count = sizeof(bluetooth_channels); Serial.println(F("Bluetooth jamming")); break;
-    case 3: channels = usb_channels; channel_count = sizeof(usb_channels); Serial.println(F("USB jamming")); break;
-    case 4: channels = video_channels; channel_count = sizeof(video_channels); Serial.println(F("Video jamming")); break;
-    case 5: channels = rc_channels; channel_count = sizeof(rc_channels); Serial.println(F("RadioCH jamming")); break;
-    case 6: channels = full_channels; channel_count = sizeof(full_channels); Serial.println(F("Full jamming")); break;
-  }
-  int ptr_hop = 0;
+  radio.setCRCLength(RF24_CRC_DISABLED);
+  radio.setDataRate(RF24_2MBPS);
+  radio.setPALevel(RF24_PA_MAX, true);
+  byte hop_channel = 45;
+  unsigned int hop_flag = 0;
   while (inJammingActive) {
-    radio.setChannel(channels[ptr_hop]);
-    delay(1);
-    ptr_hop = (ptr_hop + 1) % channel_count;
+      byte* channels;
+      int channel_count;
+      switch (jammingModeIndex) {
+        case 0: channels = wifi_channels; channel_count = sizeof(wifi_channels); break;
+        case 1: channels = ble_channels; channel_count = sizeof(ble_channels); break;
+        case 2: channels = bluetooth_channels; channel_count = sizeof(bluetooth_channels); break;
+        case 3: channels = usb_channels; channel_count = sizeof(usb_channels); break;
+        case 4: channels = video_channels; channel_count = sizeof(video_channels); break;
+        case 5: channels = rc_channels; channel_count = sizeof(rc_channels); break;
+        case 6: channels = full_channels; channel_count = sizeof(full_channels);
+      }
+      for (int i = 0; i < channel_count; i++) {
+        radio.setChannel(channels[i]);
+      }
     buttonBack.tick();
     if (buttonBack.isClick()) {
-      radio.stopConstCarrier();
-      radio.powerDown();
       inJammingActive = false;
-      displayJammingMenu();
-      break;
     }
   }
+  radio.stopConstCarrier();
+  radio.powerDown();
+  displayJammingMenu();
 }
 
 void handleNRF24Config() {
