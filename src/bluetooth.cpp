@@ -1,19 +1,16 @@
 #include "display.h"
 #include <GyverButton.h>
 #include "CONFIG.h"
-#include "menu/bluetooth.h"
-#include "ble_spam.h"
-#include "menu/subghz.h"
 #include <SD.h>
 #include "Explorer.h"
+#include "interface.h"
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEAdvertising.h>
-#include <vector>
-#include <string>
-#include <algorithm>
-#include <math.h>
+#include "menu/bluetooth.h"
+#include "ble_spam.h"
+#include "menu/subghz.h"
 
 extern DisplayType display;
 extern GButton buttonUp;
@@ -362,7 +359,6 @@ static void ensureBleHidInited(BLEHidMode mode) {
   gHid->setHidInfo(0x00, 0x01);
   gHid->setReportMap((uint8_t*)compositeHidReportDescriptor, sizeof(compositeHidReportDescriptor));
   gHid->setBatteryLevel(100);
-  gHid->startServices();
 
   gAdv = NimBLEDevice::getAdvertising();
   NimBLEAdvertisementData advData;
@@ -999,6 +995,10 @@ void handleBluetoothSubmenu() {
       }
       if (buttonOK.isClick()) {
         if (bluetoothMenuIndex == 3) {
+          if (!ensureSDReadyInteractive(true)) {
+            displayBluetoothMenu(display, bluetoothMenuIndex);
+            return;
+          }
           inBadBLE = true;
           inMouseMenu = false;
           explorerLoaded = false;
