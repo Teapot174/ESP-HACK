@@ -47,6 +47,10 @@ byte snakePosY[SNAKE_MAX_LENGTH];
 unsigned long snakeFrameTime = 0;
 float snakeTilesPerSecond = 7.0f;
 bool snakeAwaitRestart = false;
+bool snakeUpWasPressed = false;
+bool snakeDownWasPressed = false;
+bool snakeOkWasPressed = false;
+bool snakeBackWasPressed = false;
 
 constexpr int BIRD_SCALE_FACTOR = 10;
 constexpr int BIRD_GRAVITY = 5;
@@ -151,6 +155,7 @@ uint16_t tetrisScore = 0;
 uint16_t tetrisDropInterval = TETRIS_INITIAL_DROP_MS;
 unsigned long tetrisDropTime = 0;
 bool tetrisAwaitRestart = false;
+bool tetrisBackReadyForExit = true;
 
 constexpr int PONG_PADDLE_HEIGHT = 16;
 constexpr int PONG_PADDLE_WIDTH = 3;
@@ -239,6 +244,35 @@ void snakeReset() {
   snakeSpawnApple();
 }
 
+void snakeResetInputStates() {
+  snakeUpWasPressed = false;
+  snakeDownWasPressed = false;
+  snakeOkWasPressed = false;
+  snakeBackWasPressed = false;
+}
+
+bool snakeButtonPressOnce(uint8_t pin, bool &wasPressed) {
+  const bool pressed = digitalRead(pin) == LOW;
+  if (!pressed) {
+    wasPressed = false;
+    return false;
+  }
+
+  if (wasPressed) {
+    return false;
+  }
+
+  wasPressed = true;
+  return true;
+}
+
+void snakeReadInput(bool &upPress, bool &downPress, bool &okPress, bool &backPress) {
+  upPress = snakeButtonPressOnce(BUTTON_UP, snakeUpWasPressed);
+  downPress = snakeButtonPressOnce(BUTTON_DOWN, snakeDownWasPressed);
+  okPress = snakeButtonPressOnce(BUTTON_OK, snakeOkWasPressed);
+  backPress = snakeButtonPressOnce(BUTTON_BACK, snakeBackWasPressed);
+}
+
 void snakeRenderScore() {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
@@ -283,6 +317,7 @@ void snakeGameOver() {
 
 void snakeStart() {
   randomSeed(millis());
+  snakeResetInputStates();
   snakeReset();
   gamesState = GAMES_SNAKE_STATE;
   snakeRenderFrame();
@@ -654,6 +689,8 @@ void tetrisResetGrid() {
 
 void tetrisGameOver() {
   tetrisAwaitRestart = true;
+  tetrisBackReadyForExit = false;
+  buttonBack.resetStates();
   tetrisSetDisplayRotation(false);
   renderGameOverScreen("OK to RESTART");
 }
@@ -679,6 +716,7 @@ void tetrisReset() {
   tetrisDropInterval = TETRIS_INITIAL_DROP_MS;
   tetrisDropTime = millis();
   tetrisAwaitRestart = false;
+  tetrisBackReadyForExit = true;
   tetrisNextType = random(TETRIS_TYPES);
   tetrisSpawnPiece();
 }
@@ -1008,34 +1046,32 @@ void handleGamesSubmenu() {
   static MenuButtonState downHeld;
   const bool upPress = isMenuButtonPress(BUTTON_UP, upHeld);
   const bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld);
-  const bool upClick = buttonUp.isClick();
-  const bool downClick = buttonDown.isClick();
   const bool okClick = buttonOK.isClick();
   const bool backClick = buttonBack.isClick();
   const bool okHold = buttonOK.isHold();
   const bool backHold = buttonBack.isHold();
   if (gamesState == GAMES_SNAKE_STATE) {
-    if (backHold) {
+    if (snakeAwaitRestart && backClick) {
+      snakeResetInputStates();
       gamesState = GAMES_MENU_STATE;
       displayGamesMenu(display, gamesMenuIndex);
       return;
     }
 
-    snakeHandleTick(upClick, downClick, okClick, backClick);
+    bool snakeUpPress = false;
+    bool snakeDownPress = false;
+    bool snakeOkPress = false;
+    bool snakeBackPress = false;
+    snakeReadInput(snakeUpPress, snakeDownPress, snakeOkPress, snakeBackPress);
+    snakeHandleTick(snakeUpPress, snakeDownPress, snakeOkPress, snakeBackPress);
     return;
   }
 
   if (gamesState == GAMES_BIRD_STATE) {
-    static bool backHoldLatch = false;
-
-    if (backHold && !backHoldLatch) {
-      backHoldLatch = true;
+    if (birdAwaitRestart && backClick) {
       gamesState = GAMES_MENU_STATE;
       displayGamesMenu(display, gamesMenuIndex);
       return;
-    }
-    if (!backHold) {
-      backHoldLatch = false;
     }
 
     birdHandleTick(okClick);
@@ -1044,7 +1080,23 @@ void handleGamesSubmenu() {
 
   if (gamesState == GAMES_TETRIS_STATE) {
     static bool exitHoldLatch = false;
-    const bool exitHold = tetrisAwaitRestart ? backHold : (backHold && okHold);
+    if (tetrisAwaitRestart && backClick) {
+      tetrisSetDisplayRotation(false);
+      gamesState = GAMES_MENU_STATE;
+      displayGamesMenu(display, gamesMenuIndex);
+      return;
+    }
+
+    if (tetrisAwaitRestart && !tetrisBackReadyForExit) {
+      if (digitalRead(BUTTON_BACK) != LOW) {
+        buttonBack.resetStates();
+        tetrisBackReadyForExit = true;
+      }
+    }
+
+    const bool exitHold = tetrisAwaitRestart
+      ? false
+      : (backHold && okHold);
 
     if (exitHold && !exitHoldLatch) {
       exitHoldLatch = true;
@@ -1064,13 +1116,19 @@ void handleGamesSubmenu() {
   if (gamesState == GAMES_PONG_STATE) {
     static bool backHoldLatch = false;
 
-    if (backHold && !backHoldLatch) {
+    if (pongAwaitRestart && backClick) {
+      gamesState = GAMES_MENU_STATE;
+      displayGamesMenu(display, gamesMenuIndex);
+      return;
+    }
+
+    if (!pongAwaitRestart && backHold && !backHoldLatch) {
       backHoldLatch = true;
       gamesState = GAMES_MENU_STATE;
       displayGamesMenu(display, gamesMenuIndex);
       return;
     }
-    if (!backHold) {
+    if (!backHold || pongAwaitRestart) {
       backHoldLatch = false;
     }
 

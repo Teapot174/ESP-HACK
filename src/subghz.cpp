@@ -172,7 +172,7 @@ int rawRecorderPrevLevel = LOW;
 unsigned long rawRecorderPrevEdgeUs = 0;
 unsigned long rawRecorderLastEdgeUs = 0;
 
-void setupCC1101();
+bool setupCC1101();
 void configureCC1101();
 void restoreReceiveMode();
 void read_rcswitch(tpKeyData* kd);
@@ -181,6 +181,8 @@ void OLED_printWaitingSignal();
 void OLED_printRawRecorder();
 void OLED_printKey(tpKeyData* kd, String fileName = "", bool isSending = false);
 void OLED_printError(String st, bool err = true);
+void OLED_printCC1101InitError();
+void waitBackFromCC1101InitError();
 bool saveKeyToSD(tpKeyData* kd);
 String allocateNextSignalFileName();
 bool startRawRecorderSession();
@@ -189,6 +191,8 @@ bool saveRawFrameToSession(const String& rawData, float rssi);
 void flushRawRecorderFrame();
 void handleRawRecorderCapture();
 bool loadKeyFromSD(String fileName, tpKeyData* kd);
+void syncNextSignalIndexFromFiles();
+void sortSubExplorerFiles();
 void sendSynthKey(tpKeyData* kd);
 void stepFrequency(int step);
 void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat);
@@ -215,12 +219,20 @@ bool bruteInitTx();
 void bruteStopTx();
 void bruteSendCode(uint16_t code);
 
+static bool cc1101IsConnected() {
+  byte version = ELECHOUSE_cc1101.SpiReadStatus(CC1101_VERSION);
+  return version != 0x00 && version != 0xFF;
+}
+
 bool initRfModule(String mode, float freq) {
   ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_CS);
   ELECHOUSE_cc1101.setGDO0(CC1101_GDO0);
   ELECHOUSE_cc1101.SpiStrobe(0x30);
   delayMicroseconds(1000);
   ELECHOUSE_cc1101.Init();
+  if (!cc1101IsConnected()) {
+    return false;
+  }
   ELECHOUSE_cc1101.setMHZ(freq);
   ELECHOUSE_cc1101.setModulation(2);
   if (mode == "tx" || mode == "TX") {
@@ -247,7 +259,13 @@ void deinitRfModule() {
 }
 
 void runSubGHz() {
-  setupCC1101();
+  if (!setupCC1101()) {
+    Serial.println(F("Failed to initialize CC1101"));
+    OLED_printCC1101InitError();
+    waitBackFromCC1101InitError();
+    resetButtonStates();
+    return;
+  }
   rcswitch.enableReceive(CC1101_GDO0);
   emMenuState menuState = menuMain;
   menuIndex = 0;
@@ -298,6 +316,8 @@ void runSubGHz() {
           menuState = menuTransmit;
           ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
           ExplorerLoad(subExplorer, subExplorerCfg);
+          sortSubExplorerFiles();
+          syncNextSignalIndexFromFiles();
           ExplorerDraw(subExplorer, display);
           resetButtonStates();
         } else if (menuIndex == 2) {
@@ -670,7 +690,7 @@ void resetButtonStates() {
   buttonBack.resetStates();
 }
 
-void setupCC1101() {
+bool setupCC1101() {
   pinMode(CC1101_CS, OUTPUT);
   digitalWrite(CC1101_CS, HIGH);
   ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_CS);
@@ -678,9 +698,13 @@ void setupCC1101() {
   ELECHOUSE_cc1101.SpiStrobe(0x30);
   delayMicroseconds(1000);
   ELECHOUSE_cc1101.Init();
+  if (!cc1101IsConnected()) {
+    return false;
+  }
   ELECHOUSE_cc1101.SpiStrobe(0x36);
   delayMicroseconds(2000);
   configureCC1101();
+  return true;
 }
 
 void configureCC1101() {
@@ -877,39 +901,117 @@ void OLED_printError(String st, bool err) {
   display.display();
 }
 
+void OLED_printCC1101InitError() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(8, 20);
+  display.print(F("CC1101 init failed."));
+  display.setCursor(29, 32);
+  display.print(F("ERROR: 0x001"));
+  display.display();
+}
+
+void waitBackFromCC1101InitError() {
+  resetButtonStates();
+  while (digitalRead(BUTTON_BACK) == LOW) {
+    buttonBack.tick();
+    delay(10);
+  }
+
+  resetButtonStates();
+  while (true) {
+    buttonBack.tick();
+    if (buttonBack.isClick()) {
+      resetButtonStates();
+      return;
+    }
+    delay(10);
+  }
+}
+
 static void ensureSubExplorerDir() {
   if (subExplorer.currentDir.length() == 0) {
     subExplorer.currentDir = subExplorerCfg.rootDir;
   }
 }
 
+static int signalNumberFromName(String name) {
+  int lastSlash = name.lastIndexOf('/');
+  if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+  if (!(name.startsWith("Signal_") || name.startsWith("signal_")) || !name.endsWith(".sub")) {
+    return 0;
+  }
+
+  String numStr = name.substring(7, name.length() - 4);
+  if (numStr.length() == 0) {
+    return 0;
+  }
+  for (uint16_t i = 0; i < numStr.length(); i++) {
+    if (!isDigit(numStr[i])) {
+      return 0;
+    }
+  }
+
+  return numStr.toInt();
+}
+
+void syncNextSignalIndexFromFiles() {
+  ensureSubExplorerDir();
+
+  int maxSignalIndex = 0;
+  File dir = SD.open(subExplorer.currentDir);
+  if (dir) {
+    while (true) {
+      File entry = dir.openNextFile();
+      if (!entry) break;
+      if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
+        int num = signalNumberFromName(entry.name());
+        if (num > maxSignalIndex) {
+          maxSignalIndex = num;
+        }
+      }
+      entry.close();
+    }
+    dir.close();
+  }
+
+  int scannedNextIndex = maxSignalIndex + 1;
+  if (scannedNextIndex < 1) scannedNextIndex = 1;
+  nextSignalIndex = scannedNextIndex;
+  nextSignalIndexReady = true;
+}
+
+static bool subExplorerEntryLess(const ExplorerEntry& a, const ExplorerEntry& b) {
+  if (a.isDir != b.isDir) {
+    return a.isDir;
+  }
+
+  int signalA = signalNumberFromName(a.name);
+  int signalB = signalNumberFromName(b.name);
+  if (signalA > 0 && signalB > 0 && signalA != signalB) {
+    return signalA < signalB;
+  }
+
+  return a.name.compareTo(b.name) < 0;
+}
+
+void sortSubExplorerFiles() {
+  for (int i = 1; i < subExplorer.count; i++) {
+    ExplorerEntry current = subExplorer.list[i];
+    int j = i - 1;
+    while (j >= 0 && subExplorerEntryLess(current, subExplorer.list[j])) {
+      subExplorer.list[j + 1] = subExplorer.list[j];
+      j--;
+    }
+    subExplorer.list[j + 1] = current;
+  }
+}
+
 String allocateNextSignalFileName() {
   ensureSubExplorerDir();
-  if (!nextSignalIndexReady) {
-    int maxSignalIndex = 0;
-    File dir = SD.open(subExplorer.currentDir);
-    if (dir) {
-      while (true) {
-        File entry = dir.openNextFile();
-        if (!entry) break;
-        if (!entry.isDirectory() && String(entry.name()).endsWith(".sub")) {
-          String entryName = entry.name();
-          int lastSlash = entryName.lastIndexOf('/');
-          if (lastSlash >= 0) entryName = entryName.substring(lastSlash + 1);
-          if (entryName.startsWith("Signal_") && entryName.endsWith(".sub")) {
-            String numStr = entryName.substring(7, entryName.length() - 4);
-            int num = numStr.toInt();
-            if (num > maxSignalIndex) maxSignalIndex = num;
-          }
-        }
-        entry.close();
-      }
-      dir.close();
-    }
-    nextSignalIndex = maxSignalIndex + 1;
-    if (nextSignalIndex < 1) nextSignalIndex = 1;
-    nextSignalIndexReady = true;
-  }
+  syncNextSignalIndexFromFiles();
 
   int fileNum = (nextSignalIndex > 0) ? nextSignalIndex : 1;
   String fileName;
@@ -917,14 +1019,6 @@ String allocateNextSignalFileName() {
     fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
     if (!SD.exists(fileName)) break;
     fileNum++;
-  }
-  if (fileNum > 999) {
-    fileNum = 1;
-    while (fileNum <= 999) {
-      fileName = subExplorer.currentDir + "/Signal_" + String(fileNum) + ".sub";
-      if (!SD.exists(fileName)) break;
-      fileNum++;
-    }
   }
   if (fileNum > 999) {
     Serial.println(F("No free Signal_*.sub slots"));
@@ -1345,15 +1439,8 @@ void sendSynthKey(tpKeyData* kd) {
 
   if (!initRfModule("tx", kd->frequency)) {
     Serial.println(F("Failed to initialize CC1101"));
-    display.setTextColor(1);
-    display.setTextWrap(false);
-    display.setCursor(8, 20);
-    display.print("CC1101 init failed.");
-    display.setCursor(29, 32);
-    display.print("ERROR: 0x001");
-    display.display();
-    OLED_printError(F("CC1101 init Failed."), true);
-    delay(1000);
+    OLED_printCC1101InitError();
+    waitBackFromCC1101InitError();
     OLED_printKey(kd, subExplorer.selectedFile);
     return;
   }

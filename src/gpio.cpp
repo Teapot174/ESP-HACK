@@ -22,7 +22,8 @@ extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 RF24 radio(CC1101_CS, CC1101_GDO0);
 SPIClass *NRFSPI = &SPI;
 bool inNRF24Submenu = false, inJammingMenu = false, inJammingActive = false, inNRF24Config = false;
-byte nrf24MenuIndex = 0, nrf24ConfigIndex = 0, jammingModeIndex = 0;
+bool inNRF24InitError = false;
+byte nrf24MenuIndex = 0, nrf24ConfigIndex = 0, jammingModeIndex = 0, nrf24InitErrorReturnIndex = 0;
 const char* nrf24MenuItems[] = {"Jammer", "Spectrum", "Config"};
 const char* jammingModes[] = {"WiFi", "BLE", "BT", "USB", "Video", "RadioCH", "ALL"};
 const byte NRF24_MENU_ITEM_COUNT = 3, JAMMING_MODE_COUNT = 7;
@@ -307,6 +308,39 @@ void displayNRF24Error() {
   display.display();
 }
 
+void resetNRF24InputStates() {
+  buttonUp.resetStates();
+  buttonDown.resetStates();
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+}
+
+void showNRF24InitError(byte returnIndex) {
+  inNRF24Submenu = true;
+  inJammingMenu = false;
+  inJammingActive = false;
+  inNRF24Config = false;
+  inSpectrumAnalyzer = false;
+  inNRF24InitError = true;
+  nrf24InitErrorReturnIndex = returnIndex;
+  nrf24MenuIndex = returnIndex;
+  resetNRF24InputStates();
+  displayNRF24Error();
+}
+
+void returnToNRF24Menu(byte menuIndex) {
+  inNRF24Submenu = true;
+  inJammingMenu = false;
+  inJammingActive = false;
+  inNRF24Config = false;
+  inSpectrumAnalyzer = false;
+  inNRF24InitError = false;
+  nrf24MenuIndex = menuIndex;
+  gpioMenuIndex = 1;
+  resetNRF24InputStates();
+  displayNRF24Menu();
+}
+
 bool initializeNRF24() {
   loadNRF24Config();
   pinMode(nrf24Config.csnPin, OUTPUT);
@@ -396,7 +430,9 @@ void handleNRF24Config() {
 void handleJammingMenu() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
+
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+
   if (isMenuButtonPress(BUTTON_UP, upHeld)) {
     jammingModeIndex = (jammingModeIndex - 1 + JAMMING_MODE_COUNT) % JAMMING_MODE_COUNT;
     displayJammingMenu();
@@ -411,6 +447,9 @@ void handleJammingMenu() {
       inJammingActive = true;
       displayJammingActive();
       startNRFJamming();
+    } else {
+      showNRF24InitError(0);
+      return;
     }
   }
   if (buttonBack.isClick()) {
@@ -420,30 +459,34 @@ void handleJammingMenu() {
       inJammingActive = false;
       displayJammingMenu();
     } else {
-      inJammingMenu = false;
-      nrf24MenuIndex = 0;
-      displayNRF24Menu();
+      returnToNRF24Menu(0);
     }
   }
 }
 
 void handleNRF24Submenu() {
+  if (inNRF24InitError) {
+    buttonUp.resetStates();
+    buttonDown.resetStates();
+    buttonOK.resetStates();
+    buttonBack.tick();
+    if (buttonBack.isClick()) {
+      returnToNRF24Menu(nrf24InitErrorReturnIndex);
+    }
+    return;
+  }
+
   if (inSpectrumAnalyzer) {
     runSpectrumAnalyzer();
-    buttonBack.tick();
-    buttonUp.tick();
-    if (buttonUp.isClick()) {
-      inSpectrumAnalyzer = false;
-      radio.stopListening();
-      radio.powerDown();
-      memset(spectrumValues, 0, sizeof(spectrumValues));
-      displayNRF24Menu();
-    }
+    buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
     if (buttonBack.isClick()) {
-      inSpectrumAnalyzer = false;
       radio.stopListening();
       radio.powerDown();
+      inNRF24Submenu = true;
+      inSpectrumAnalyzer = false;
+      nrf24MenuIndex = 1;
       memset(spectrumValues, 0, sizeof(spectrumValues));
+      resetNRF24InputStates();
       displayNRF24Menu();
     }
     return;
@@ -484,6 +527,8 @@ void handleNRF24Submenu() {
           radio.setDataRate(RF24_2MBPS);
           radio.setCRCLength(RF24_CRC_DISABLED);
           lastSpectrumUpdate = millis();
+        } else {
+          showNRF24InitError(1);
         }
         break;
       case 2:
@@ -495,7 +540,7 @@ void handleNRF24Submenu() {
     }
   }
   if (buttonBack.isClick()) {
-    inNRF24Submenu = inJammingMenu = inJammingActive = inSpectrumAnalyzer = false;
+    inNRF24Submenu = inJammingMenu = inJammingActive = inSpectrumAnalyzer = inNRF24InitError = false;
     displayGPIOMenu(display, gpioMenuIndex);
   }
 }
@@ -938,7 +983,7 @@ void handleIButtonSubmenu() {
 }
 
 void handleGPIOSubmenu() {
-  if (inNRF24Submenu || inNRF24Config || inJammingMenu || inJammingActive || inSpectrumAnalyzer) return handleNRF24Submenu();
+  if (inNRF24Submenu || inNRF24Config || inJammingMenu || inJammingActive || inSpectrumAnalyzer || inNRF24InitError) return handleNRF24Submenu();
   if (inIButtonSubmenu) return handleIButtonSubmenu();
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
