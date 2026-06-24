@@ -140,6 +140,86 @@ static bool explorerMatchesExtension(const String& name, const ExplorerConfig& c
   return false;
 }
 
+static char explorerLowerAscii(char c) {
+  if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
+  return c;
+}
+
+static int explorerCompareNumberRun(const String& a, int& ai, const String& b, int& bi) {
+  const int aRunStart = ai;
+  const int bRunStart = bi;
+  while (ai < a.length() && a[ai] == '0') ai++;
+  while (bi < b.length() && b[bi] == '0') bi++;
+
+  const int aDigitsStart = ai;
+  const int bDigitsStart = bi;
+  while (ai < a.length() && isDigit(a[ai])) ai++;
+  while (bi < b.length() && isDigit(b[bi])) bi++;
+
+  const int aDigitsLen = ai - aDigitsStart;
+  const int bDigitsLen = bi - bDigitsStart;
+  if (aDigitsLen != bDigitsLen) {
+    return (aDigitsLen < bDigitsLen) ? -1 : 1;
+  }
+
+  for (int i = 0; i < aDigitsLen; i++) {
+    char ca = a[aDigitsStart + i];
+    char cb = b[bDigitsStart + i];
+    if (ca != cb) return (ca < cb) ? -1 : 1;
+  }
+
+  const int aRunLen = ai - aRunStart;
+  const int bRunLen = bi - bRunStart;
+  if (aRunLen != bRunLen) {
+    return (aRunLen < bRunLen) ? -1 : 1;
+  }
+
+  return 0;
+}
+
+static int explorerNaturalCompare(const String& a, const String& b) {
+  int ai = 0;
+  int bi = 0;
+  while (ai < a.length() && bi < b.length()) {
+    if (isDigit(a[ai]) && isDigit(b[bi])) {
+      int numberResult = explorerCompareNumberRun(a, ai, b, bi);
+      if (numberResult != 0) return numberResult;
+      continue;
+    }
+
+    char ca = explorerLowerAscii(a[ai]);
+    char cb = explorerLowerAscii(b[bi]);
+    if (ca != cb) return (ca < cb) ? -1 : 1;
+    ai++;
+    bi++;
+  }
+
+  if (ai != a.length() || bi != b.length()) {
+    return (ai == a.length()) ? -1 : 1;
+  }
+
+  return a.compareTo(b);
+}
+
+static bool explorerEntryLess(const ExplorerEntry& a, const ExplorerEntry& b) {
+  if (a.isDir != b.isDir) {
+    return a.isDir;
+  }
+  return explorerNaturalCompare(a.name, b.name) < 0;
+}
+
+static void explorerSortEntries(ExplorerState& state) {
+  for (int i = 1; i < state.count; i++) {
+    ExplorerEntry current = state.list[i];
+    int j = i - 1;
+    while (j >= 0 && explorerEntryLess(current, state.list[j])) {
+      state.list[j + 1] = state.list[j];
+      j--;
+    }
+    state.list[j + 1] = current;
+  }
+}
+
 static bool explorerIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
   const bool pressed = digitalRead(pin) == LOW;
   const unsigned long now = millis();
@@ -226,6 +306,7 @@ void ExplorerLoad(ExplorerState& state, const ExplorerConfig& cfg) {
     entry.close();
   }
   dir.close();
+  explorerSortEntries(state);
 }
 
 void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
@@ -237,7 +318,7 @@ void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
   display.setCursor(3, 3);
   display.print(state.currentDir);
 
-  display.setCursor(1, 12);
+  display.setCursor(1, 10);
   display.println(F("---------------------"));
 
   if (state.count == 0) {
@@ -262,10 +343,10 @@ void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
     String name = state.list[idx].name;
     if (name.length() > 18) name = name.substring(0, 18);
 
-    int y = (i + baseRow) * 11;
+    int y = (i + baseRow) * 11 - 2;
 
     if (idx == state.index) {
-      display.fillRect(0, y - 1, 128, 11, SH110X_WHITE);
+      display.fillRect(0, y - 2, 128, 11, SH110X_WHITE);
       display.setTextColor(SH110X_BLACK);
     } else {
       display.setTextColor(SH110X_WHITE);

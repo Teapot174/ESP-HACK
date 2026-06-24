@@ -437,7 +437,7 @@ void displayBadKBScriptExec(DisplayType &display, const String& filename, const 
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(filename);
   display.println(F("---------------------"));
 
@@ -504,7 +504,7 @@ void displayBLESpamHeader(const char* spamType, bool running) {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   if (running) {
     display.println(String(getBLESpamHeaderName(spamType)) + "...");
     display.println(F("---------------------"));
@@ -550,7 +550,7 @@ static void displayMousePairScreen(bool connected, bool ready, const char* error
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("Mouse"));
   display.setCursor(1, 10);
   display.println(F("---------------------"));
@@ -576,7 +576,7 @@ static void displayMouseConfigScreen(uint8_t selection, uint8_t powerIndex, uint
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("Mouse"));
   display.setCursor(1, 10);
   display.println(F("---------------------"));
@@ -798,11 +798,10 @@ void handleBluetoothSubmenu() {
         explorerLoaded = false;
         justEnteredBadBLE = false;
         pauseBLE();
-        bluetoothMenuIndex = 0;
         display.clearDisplay();
-        returnToMainMenu();
+        displayBluetoothMenu(display, bluetoothMenuIndex);
         display.display();
-        Serial.println(F("[BadKB] Back to main menu from BadKB"));
+        Serial.println(F("[BadKB] Back to Bluetooth menu from BadKB"));
       }
       if (justEnteredBadBLE) justEnteredBadBLE = false;
     }

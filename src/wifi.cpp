@@ -232,7 +232,7 @@ void displaySpamPrompt() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("Press OK."));
   display.println(F("---------------------"));
   display.display();
@@ -271,7 +271,7 @@ void displaySpamActive() {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("WiFi-Spam..."));
   display.println(F("---------------------"));
   int16_t startY = display.getCursorY();
@@ -289,7 +289,7 @@ void displayEvilPortalScreen() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("Evil-Portal"));
   display.setCursor(1, 10);
   display.println(F("IP: 192.168.4.1"));
@@ -327,7 +327,7 @@ void displayWardrivingPrompt() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("Press OK."));
   display.println(F("---------------------"));
   display.display();
@@ -360,7 +360,7 @@ void displayWardrivingActive() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.println(F("Wardriving..."));
   display.println(F("---------------------"));
   if (foundNetworks > 0) {
@@ -834,7 +834,7 @@ void handleDeauthSubmenu() {
       display.clearDisplay();
       display.setTextSize(1);
       display.setTextColor(SH110X_WHITE);
-      display.setCursor(1, 1);
+      display.setCursor(3, 3);
       display.print(F("No networks found"));
       display.display();
       delay(2000);
@@ -939,7 +939,7 @@ void handlePacketsMenu() {
       display.clearDisplay();
       display.setTextSize(1);
       display.setTextColor(SH110X_WHITE);
-      display.setCursor(1, 1);
+      display.setCursor(3, 3);
       display.print(F("No networks found"));
       display.display();
       delay(2000);
@@ -1039,8 +1039,7 @@ void handleWiFiSubmenu() {
       } else if (action == EXPLORER_EXIT) {
         inEvilPortal = false;
         inPortalExplorer = false;
-        currentMenu = 0;
-        returnToMainMenu();
+        displayWiFiMenu(display, wifiMenuIndex);
       }
       return;
     } else {

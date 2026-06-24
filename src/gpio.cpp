@@ -252,8 +252,8 @@ void displayNRF24Menu(int previousIndex = -1) {
 void displayNRF24Config() {
   display.clearDisplay();
   display.setTextSize(1);
-  display.setCursor(1, 1);
-  display.println(F(" Config"));
+  display.setCursor(3, 3);
+  display.println(F("Config"));
   display.println(F("====================="));
   const char* labels[] = {"3(CE):   ", "4(CSN):  ", "5(SCK):  ", "6(MOSI): ", "7(MISO): "};
   byte* pins[] = {&nrf24Config.cePin, &nrf24Config.csnPin, &nrf24Config.sckPin, &nrf24Config.mosiPin, &nrf24Config.misoPin};
@@ -847,7 +847,7 @@ void handleIButtonSubmenu() {
         if (!SD.begin(SD_CS, sdSPI)) {
           display.clearDisplay();
           display.setTextSize(1);
-          display.setCursor(1, 1);
+          display.setCursor(3, 3);
           display.println(F("SD init failed"));
           display.display();
           delay(1000);

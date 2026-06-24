@@ -394,11 +394,11 @@ void drawReadingScreen() {
     display.print(F("Waiting signal..."));
     display.drawBitmap(0, 12, image_InfraredLearnShort_bits, 128, 31, SH110X_WHITE);
   } else {
-    display.setCursor(1, 1);
+    display.setCursor(1, 2);
     display.print(F("Signal:"));
 
     // Code
-    display.setCursor(1, 12);
+    display.setCursor(1, 14);
     display.print(F("Code: "));
     String code;
     if (results.decode_type == UNKNOWN) {
@@ -451,6 +451,49 @@ static void ensureIrExplorerDir() {
   }
 }
 
+static int infraredNumberFromName(String name) {
+  int lastSlash = name.lastIndexOf('/');
+  if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+  if (!(name.startsWith("Infrared_") || name.startsWith("infrared_")) || !name.endsWith(".ir")) {
+    return 0;
+  }
+
+  String numStr = name.substring(9, name.length() - 3);
+  if (numStr.length() == 0) {
+    return 0;
+  }
+  for (uint16_t i = 0; i < numStr.length(); i++) {
+    if (!isDigit(numStr[i])) {
+      return 0;
+    }
+  }
+
+  return numStr.toInt();
+}
+
+static int nextInfraredFileIndex() {
+  ensureIrExplorerDir();
+
+  int maxInfraredIndex = 0;
+  File dir = SD.open(irExplorer.currentDir);
+  if (dir) {
+    while (true) {
+      File entry = dir.openNextFile();
+      if (!entry) break;
+      if (!entry.isDirectory() && String(entry.name()).endsWith(".ir")) {
+        int num = infraredNumberFromName(entry.name());
+        if (num > maxInfraredIndex) {
+          maxInfraredIndex = num;
+        }
+      }
+      entry.close();
+    }
+    dir.close();
+  }
+
+  return maxInfraredIndex + 1;
+}
+
 
 void drawSignalSubmenu() {
   display.clearDisplay();
@@ -458,12 +501,11 @@ void drawSignalSubmenu() {
   display.setTextWrap(false);
   display.setTextColor(SH110X_WHITE);
 
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   String name = irExplorer.selectedFile;
   if (name.length() > 16) name = name.substring(0, 16);
-  display.print(F("File: "));
   display.print(name);
-  display.setCursor(1, 12);
+  display.setCursor(1, 10);
   display.println(F("---------------------"));
 
   if (irSignalCount == 0) {
@@ -480,9 +522,10 @@ void drawSignalSubmenu() {
   for (int i = 0; i < perPage; i++) {
     int idx = startIndex + i;
     if (idx >= irSignalCount) break;
-    display.setCursor(1, 24 + i * 10);
+    const int signalY = (i + 2) * 11 - 2;
+    display.setCursor(3, signalY);
     if (idx == irSignalIndex) {
-      display.fillRect(0, 24 + i * 10 - 1, display.width(), 10, SH110X_WHITE);
+      display.fillRect(0, signalY - 2, display.width(), 11, SH110X_WHITE);
       display.setTextColor(SH110X_BLACK);
     } else {
       display.setTextColor(SH110X_WHITE);
@@ -862,7 +905,6 @@ void appendToDeviceContent(String btn_name) {
 bool saveIRSignal() {
   ensureIrExplorerDir();
   String filename = "Infrared";
-  int index = 1;
   File dir = SD.open(irExplorer.currentDir);
   if (!dir) {
     Serial.println(F("Failed to open /Infrared directory"));
@@ -870,6 +912,7 @@ bool saveIRSignal() {
   }
   dir.close();
   SD.mkdir(irExplorer.currentDir);
+  int index = nextInfraredFileIndex();
   while (SD.exists(irExplorer.currentDir + "/" + filename + "_" + String(index) + ".ir")) {
     index++;
   }
@@ -1138,12 +1181,11 @@ void handleIRSubmenu() {
         ExplorerDraw(irExplorer, display);
       }
     } else if (action == EXPLORER_EXIT) {
-      inIRMenu = false;
+      inIRMenu = true;
       state = MENU;
-      currentMenu = 3;
       irExplorer.selectedFile = "";
       display.clearDisplay();
-      returnToMainMenu();
+      displayIRMenu(display, irMenuIndex);
       display.display();
     }
   } else if (state == IR_READING) {

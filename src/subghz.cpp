@@ -192,7 +192,6 @@ void flushRawRecorderFrame();
 void handleRawRecorderCapture();
 bool loadKeyFromSD(String fileName, tpKeyData* kd);
 void syncNextSignalIndexFromFiles();
-void sortSubExplorerFiles();
 void sendSynthKey(tpKeyData* kd);
 void stepFrequency(int step);
 void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat);
@@ -316,7 +315,6 @@ void runSubGHz() {
           menuState = menuTransmit;
           ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
           ExplorerLoad(subExplorer, subExplorerCfg);
-          sortSubExplorerFiles();
           syncNextSignalIndexFromFiles();
           ExplorerDraw(subExplorer, display);
           resetButtonStates();
@@ -847,7 +845,7 @@ void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 1);
+  display.setCursor(1, 2);
   if (fileName != "") {
     String st = fileName;
     if (st.length() > 16) st = st.substring(0, 16);
@@ -869,7 +867,7 @@ void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
       }
     }
   }
-  display.setCursor(1, 12);
+  display.setCursor(1, 14);
   display.print("Code: " + st);
   st = "Type: " + getTypeName(kd->type);
   display.setCursor(1, 24);
@@ -894,7 +892,7 @@ void OLED_printError(String st, bool err) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
-  display.setCursor(1, 1);
+  display.setCursor(3, 3);
   display.print(err ? F("Error!") : F("OK"));
   display.setCursor(1, 12);
   display.print(st);
@@ -981,32 +979,6 @@ void syncNextSignalIndexFromFiles() {
   if (scannedNextIndex < 1) scannedNextIndex = 1;
   nextSignalIndex = scannedNextIndex;
   nextSignalIndexReady = true;
-}
-
-static bool subExplorerEntryLess(const ExplorerEntry& a, const ExplorerEntry& b) {
-  if (a.isDir != b.isDir) {
-    return a.isDir;
-  }
-
-  int signalA = signalNumberFromName(a.name);
-  int signalB = signalNumberFromName(b.name);
-  if (signalA > 0 && signalB > 0 && signalA != signalB) {
-    return signalA < signalB;
-  }
-
-  return a.name.compareTo(b.name) < 0;
-}
-
-void sortSubExplorerFiles() {
-  for (int i = 1; i < subExplorer.count; i++) {
-    ExplorerEntry current = subExplorer.list[i];
-    int j = i - 1;
-    while (j >= 0 && subExplorerEntryLess(current, subExplorer.list[j])) {
-      subExplorer.list[j + 1] = subExplorer.list[j];
-      j--;
-    }
-    subExplorer.list[j + 1] = current;
-  }
 }
 
 String allocateNextSignalFileName() {
@@ -1264,7 +1236,7 @@ void OLED_printBruteConfig() {
   display.setTextColor(1);
   display.setTextWrap(false);
 
-  display.setCursor(1, 1);
+  display.setCursor(3, 2);
   display.print(F("Bruteforce"));
   display.setCursor(1, 10);
   display.print(F("====================="));
@@ -1813,7 +1785,7 @@ void OLED_printAnalyzer() {
   display.setTextSize(2);
   char buf[32];
   if (analyzerState.has_signal && analyzerState.curr_freq > 0) {
-    display.fillRect(4, 0, 121, 20, SH110X_WHITE);
+    display.fillRect(6, 0, 88, 20, SH110X_WHITE);
     display.setTextColor(SH110X_BLACK);
     snprintf(buf, sizeof(buf), "%03lu.%03lu",
              analyzerState.curr_freq / 1000000UL % 1000UL,

@@ -45,7 +45,7 @@
 #define GPIO_F 25
 
 // Firmware version
-static const char* FIRMWARE = "b101";
+static const char* FIRMWARE = "b105";
 
 extern char wifiPortalName[33];
 extern char bleDeviceName[33];
