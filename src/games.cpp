@@ -89,6 +89,7 @@ int birdScore = 0;
 unsigned long birdFrameCounter = 0;
 unsigned long birdFrameTime = 0;
 bool birdAwaitRestart = false;
+bool birdBackReadyForExit = true;
 
 constexpr byte TETRIS_BOARD_WIDTH = 10;
 constexpr byte TETRIS_BOARD_HEIGHT = 18;
@@ -418,6 +419,7 @@ void birdReset() {
   birdFrameCounter = 0;
   birdFrameTime = millis();
   birdAwaitRestart = false;
+  birdBackReadyForExit = true;
 
   birdPipes[0].x = SCREEN_WIDTH * BIRD_SCALE_FACTOR;
   birdPipes[0].height = birdGeneratePipeHeight();
@@ -479,6 +481,8 @@ void birdGameOver() {
     delay(180);
   }
   birdAwaitRestart = true;
+  birdBackReadyForExit = false;
+  buttonBack.resetStates();
   renderGameOverScreen();
 }
 
@@ -1068,6 +1072,15 @@ void handleGamesSubmenu() {
   }
 
   if (gamesState == GAMES_BIRD_STATE) {
+    if (birdAwaitRestart && !birdBackReadyForExit) {
+      if (digitalRead(BUTTON_BACK) != LOW) {
+        buttonBack.resetStates();
+        birdBackReadyForExit = true;
+      }
+      birdHandleTick(okClick);
+      return;
+    }
+
     if (birdAwaitRestart && backClick) {
       gamesState = GAMES_MENU_STATE;
       displayGamesMenu(display, gamesMenuIndex);
