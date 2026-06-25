@@ -582,7 +582,7 @@ bool sendIRSignal(String fileName, int signalIdx) {
   String value = "";
   String rawData = "";
   uint16_t frequency = 38000;
-  uint8_t bits = 32;
+  uint16_t bits = 32;
   bool parsedMode = false;
   int currentSignal = -1;
 
@@ -638,19 +638,32 @@ bool sendIRSignal(String fileName, int signalIdx) {
     uint16_t sendBits = bits > 0 ? bits : 0;
 
     if (protocol.equalsIgnoreCase("Samsung32")) {
-      uint32_t addressValue = parseHexStringToUint32LE(address);
-      uint32_t commandValue = parseHexStringToUint32LE(command);
-      uint32_t data = (addressValue << 16) | commandValue;
+      uint32_t data = 0;
+      if (value.length() > 0) {
+        data = parseHexStringToUint32LE(value);
+      } else {
+        const uint8_t addressValue = parseHexStringToUint32LE(address) & 0xFF;
+        const uint8_t commandValue = parseHexStringToUint32LE(command) & 0xFF;
+        data = irsend.encodeSAMSUNG(addressValue, commandValue);
+      }
       Serial.print(F("Sending Samsung: 0x"));
       Serial.println(data, HEX);
       irsend.sendSAMSUNG(data, 32);
       return true;
       
     } else if (protocol.equalsIgnoreCase("SONY")) {
-      uint32_t commandValue = parseHexStringToUint32LE(command);
+      uint32_t sonyCode = 0;
+      uint16_t sonyBits = bits > 0 ? bits : 12;
+      if (value.length() > 0) {
+        sonyCode = parseHexStringToUint32LE(value);
+      } else {
+        const uint16_t commandValue = parseHexStringToUint32LE(command);
+        const uint16_t addressValue = parseHexStringToUint32LE(address);
+        sonyCode = irsend.encodeSony(sonyBits, commandValue, addressValue);
+      }
       Serial.print(F("Sending Sony: 0x"));
-      Serial.println(commandValue, HEX);
-      irsend.sendSony(commandValue, bits > 0 ? bits : 12);
+      Serial.println(sonyCode, HEX);
+      irsend.sendSony(sonyCode, sonyBits, 2);
       return true;
       
     } else if (protocol.equalsIgnoreCase("NEC")) {
@@ -661,11 +674,11 @@ bool sendIRSignal(String fileName, int signalIdx) {
         necCode = parseHexStringToUint32LE(value);
       } else {
         // Формируем из address и command с правильным порядком байт
-        uint32_t addressValue = parseHexStringToUint32LE(address);
-        uint32_t commandValue = parseHexStringToUint32LE(command);
+        uint16_t addressValue = parseHexStringToUint32LE(address);
+        uint8_t commandValue = parseHexStringToUint32LE(command) & 0xFF;
         
         // Для NEC правильный порядок: command в старших 16 битах, address в младших
-        necCode = (commandValue << 16) | addressValue;
+        necCode = irsend.encodeNEC(addressValue, commandValue);
       }
       
       Serial.print(F("Address bytes: ["));
@@ -844,6 +857,19 @@ String parseRawSignal() {
 }
 
 void appendToDeviceContent(String btn_name) {
+  if (results.repeat) {
+    Serial.println(F("Ignoring repeat IR frame"));
+    return;
+  }
+  if (results.decode_type != decode_type_t::UNKNOWN && results.bits > 64) {
+    strDeviceContent += "name: " + btn_name + "\n";
+    strDeviceContent += "type: raw\n";
+    strDeviceContent += "frequency: " + String(IR_FREQUENCY) + "\n";
+    strDeviceContent += "duty_cycle: " + String(DUTY_CYCLE) + "\n";
+    strDeviceContent += "data: " + parseRawSignal() + "\n";
+    return;
+  }
+
   strDeviceContent += "name: " + btn_name + "\n";
   strDeviceContent += "type: parsed\n";
   bool saveBits = false;
@@ -851,6 +877,8 @@ void appendToDeviceContent(String btn_name) {
   switch (results.decode_type) {
     case decode_type_t::SAMSUNG: {
       strDeviceContent += "protocol: Samsung32\n";
+      saveBits = true;
+      saveValue = true;
       break;
     }
     case decode_type_t::SONY: {
@@ -1191,13 +1219,17 @@ void handleIRSubmenu() {
   } else if (state == IR_READING) {
     static int lastSignalRead = -1;
     if (irrecv.decode(&results)) {
-      readSignal = true;
-      signalsRead++;
-      if (signalsRead <= 20) {
-        appendToDeviceContent("Signal " + String(signalsRead));
-        Serial.println(F("IR signal captured"));
+      if (results.repeat) {
+        Serial.println(F("Ignoring repeat IR frame"));
       } else {
-        Serial.println(F("IR signal captured but not stored (limit)"));
+        readSignal = true;
+        signalsRead++;
+        if (signalsRead <= 20) {
+          appendToDeviceContent("Signal " + String(signalsRead));
+          Serial.println(F("IR signal captured"));
+        } else {
+          Serial.println(F("IR signal captured but not stored (limit)"));
+        }
       }
       irrecv.resume();
     }
@@ -1227,6 +1259,7 @@ void handleIRSubmenu() {
       }
     }
     if (buttonBack.isClick()) {
+      startInputSuppress();
       inIRMenu = true;
       state = MENU;
       readSignal = false;
