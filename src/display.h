@@ -5,6 +5,13 @@
 #include <Adafruit_GFX.h>
 #include "CONFIG.h"
 
+#define DISPLAY_SH1106 0
+#define DISPLAY_SSD1306 1
+
+#ifndef DISPLAY_TYPE
+  #error "DISPLAY_TYPE is not set. Select SH1106 or SSD1306 environment in platformio.ini."
+#endif
+
 #if DISPLAY_TYPE == DISPLAY_SH1106
   #include <Adafruit_SH110X.h>
   typedef Adafruit_SH1106G DisplayType;
