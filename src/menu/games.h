@@ -3,8 +3,8 @@
 
 #include "display.h"
 
-#define GAMES_MENU_ITEM_COUNT 4
-static const char* gamesMenuItems[] = {"Snake", "Bird", "Tetris", "Pong"};
+#define GAMES_MENU_ITEM_COUNT 5
+static const char* gamesMenuItems[] = {"Snake", "Bird", "Tetris", "Pong", "Doom"};
 
 inline void displayGamesMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
   displayAnimatedMenu(display, gamesMenuItems, GAMES_MENU_ITEM_COUNT, menuIndex, previousIndex);
