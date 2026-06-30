@@ -282,6 +282,18 @@ void displaySpamActive() {
   display.display();
 }
 
+void stopBeaconSpam() {
+  isSpamming = false;
+  WiFi.mode(WIFI_OFF);
+  esp_wifi_set_promiscuous(false);
+}
+
+void exitBeaconSpamMenu() {
+  stopBeaconSpam();
+  inSpamMenu = false;
+  displayWiFiMenu(display, wifiMenuIndex);
+}
+
 void displayEvilPortalScreen() {
   Serial.print(F("EvilPortal:"));
   Serial.println(capturedData);
@@ -524,10 +536,12 @@ void beaconSpamList(const char list[]) {
   while (i < ssidsLen && isSpamming) {
     buttonOK.tick();
     buttonBack.tick();
-    if (buttonOK.isClick() || buttonBack.isClick()) {
-      isSpamming = false;
-      WiFi.mode(WIFI_OFF);
-      esp_wifi_set_promiscuous(false);
+    if (buttonBack.isClick()) {
+      exitBeaconSpamMenu();
+      return;
+    }
+    if (buttonOK.isClick()) {
+      stopBeaconSpam();
       return;
     }
 
@@ -567,10 +581,12 @@ void beaconSpamList(const char list[]) {
     while (millis() - start < 1 && isSpamming) {
       buttonOK.tick();
       buttonBack.tick();
-      if (buttonOK.isClick() || buttonBack.isClick()) {
-        isSpamming = false;
-        WiFi.mode(WIFI_OFF);
-        esp_wifi_set_promiscuous(false);
+      if (buttonBack.isClick()) {
+        exitBeaconSpamMenu();
+        return;
+      }
+      if (buttonOK.isClick()) {
+        stopBeaconSpam();
         return;
       }
     }
@@ -1162,8 +1178,7 @@ void handleWiFiSubmenu() {
   if (backClick) {
     if (inSpamMenu) {
       if (isSpamming) {
-        isSpamming = false;
-        WiFi.mode(WIFI_OFF);
+        stopBeaconSpam();
       }
       inSpamMenu = false;
       displayWiFiMenu(display, wifiMenuIndex);
