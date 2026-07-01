@@ -72,6 +72,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Flappy Bird
 - Ping Pong
 - Tetris
+- Doom
 
 ### Settings
 - Display Color
