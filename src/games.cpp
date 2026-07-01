@@ -148,8 +148,22 @@ bool buttonPressedOnce(uint8_t pin, bool &wasPressed) {
   return false;
 }
 
+bool buttonReleasedOnce(uint8_t pin, bool &wasPressed) {
+  const bool pressed = digitalRead(pin) == LOW;
+  if (pressed) {
+    wasPressed = true;
+    return false;
+  }
+  if (wasPressed) {
+    wasPressed = false;
+    return true;
+  }
+  return false;
+}
+
 bool inputOkPress() { return buttonPressedOnce(BUTTON_OK, okWasPressed); }
 bool inputBackPress() { return buttonPressedOnce(BUTTON_BACK, backWasPressed); }
+bool inputBackRelease() { return buttonReleasedOnce(BUTTON_BACK, backWasPressed); }
 
 void jumpTo(uint8_t targetScene) {
   scene = targetScene;
@@ -712,7 +726,7 @@ void tickIntro() {
   if (!introDrawn) {
     drawIntro();
   }
-  if (inputBackPress()) {
+  if (inputBackRelease()) {
     stop();
   } else if (inputOkPress()) {
     beginPlay();
@@ -1988,6 +2002,9 @@ void handleGamesSubmenu() {
     }
 
     Doom::tick();
+    if (gamesState == GAMES_MENU_STATE) {
+      doomExitAwaitRelease = true;
+    }
     return;
   }
 
