@@ -154,18 +154,41 @@ bool analyzerLocked = false;
 unsigned long analyzerLastDraw = 0;
 bool analyzerExitRequested = false;
 const float RAW_REC_DEFAULT_RSSI = -90.0f; // RAW FILTER
+const float RAW_REC_MIN_RSSI = -90.0f;
+const float RAW_REC_MAX_RSSI = -45.0f;
+const float RAW_REC_RSSI_STEP = 5.0f;
 const unsigned long RAW_REC_FRAME_GAP_US = 7000;
 const int RAW_REC_MIN_EDGES = 20;
 const int RAW_REC_MAX_EDGES = 900;
+
+
+
 bool rawRecorderRunning = false;
+bool rawRecorderStopped = false;
 bool rawRecorderIgnoreOkRelease = false;
+bool rawRecorderIgnoreBackRelease = false;
+bool transmitIgnoreOkRelease = false;
+bool transmitIgnoreBackRelease = false;
+bool rawPlaybackActive = false;
+bool rawPlaybackStopRequestedFlag = false;
+bool rawPlaybackOkWasPressed = false;
+bool rawPlaybackBackWasPressed = false;
+bool rawPlaybackIgnoreOkRelease = false;
+bool rawPlaybackIgnoreBackRelease = false;
+float rawPlaybackShownPct = 0.0f;
+float rawPlaybackTargetPct = 0.0f;
+unsigned long rawPlaybackStartMs = 0;
+unsigned long rawPlaybackLastDrawMs = 0;
+TaskHandle_t rawPlaybackTaskHandle = nullptr;
 float rawRecorderRssiThreshold = RAW_REC_DEFAULT_RSSI;
 float rawRecorderLastRssi = -127.0f;
 uint16_t rawRecorderSavedCount = 0;
 unsigned long rawRecorderLastDraw = 0;
 String rawRecorderLastFile = "";
 String rawRecorderSessionFile = "";
+String rawRecorderStoppedFile = "";
 String loadedRawData = "";
+uint8_t rawRecorderSpectrumVals[52];
 int rawRecorderEdges[RAW_REC_MAX_EDGES];
 int rawRecorderEdgeCount = 0;
 int rawRecorderPrevLevel = LOW;
@@ -179,6 +202,10 @@ void read_rcswitch(tpKeyData* kd);
 void read_raw(tpKeyData* kd);
 void OLED_printWaitingSignal();
 void OLED_printRawRecorder();
+void drawRawRecorderButton();
+void drawRawRecorderSpectrum(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
+void resetRawRecorderSpectrum();
+void stepRawRecorderRssiThreshold();
 void OLED_printKey(tpKeyData* kd, String fileName = "", bool isSending = false);
 void OLED_printError(String st, bool err = true);
 void OLED_printCC1101InitError();
@@ -193,6 +220,8 @@ void handleRawRecorderCapture();
 bool loadKeyFromSD(String fileName, tpKeyData* kd);
 void syncNextSignalIndexFromFiles();
 void sendSynthKey(tpKeyData* kd);
+bool playRawRecorderFile(const String& fileName);
+void drawRawPlaybackWave(float phase, uint8_t progressPct);
 void stepFrequency(int step);
 void RCSwitch_send(uint64_t data, unsigned int bits, int pulse, int protocol, int repeat);
 void RCSwitch_RAW_send(int *ptrtransmittimings);
@@ -313,6 +342,8 @@ void runSubGHz() {
             continue;
           }
           menuState = menuTransmit;
+          transmitIgnoreOkRelease = false;
+          transmitIgnoreBackRelease = false;
           ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
           ExplorerLoad(subExplorer, subExplorerCfg);
           syncNextSignalIndexFromFiles();
@@ -344,16 +375,20 @@ void runSubGHz() {
           menuState = menuRawRecorder;
           setupCC1101();
           rawRecorderRunning = false;
+          rawRecorderStopped = false;
           rawRecorderIgnoreOkRelease = true;
+          rawRecorderIgnoreBackRelease = false;
           rawRecorderSavedCount = 0;
           rawRecorderLastRssi = -127.0f;
           rawRecorderLastFile = "";
           rawRecorderSessionFile = "";
+          rawRecorderStoppedFile = "";
           rawRecorderEdgeCount = 0;
           rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
           rawRecorderPrevEdgeUs = micros();
           rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
           rawRecorderLastDraw = 0;
+          resetRawRecorderSpectrum();
           resetButtonStates();
           OLED_printRawRecorder();
         }
@@ -425,30 +460,74 @@ void runSubGHz() {
           buttonOK.resetStates();
         }
       }
+      if (rawRecorderIgnoreBackRelease) {
+        if (digitalRead(BUTTON_BACK) == LOW) {
+          (void)buttonBack.isClick();
+        } else {
+          rawRecorderIgnoreBackRelease = false;
+          buttonBack.resetStates();
+        }
+      }
 
       bool upClick = buttonUp.isClick();
       bool downClick = buttonDown.isClick();
       bool okClick = !rawRecorderIgnoreOkRelease && buttonOK.isClick();
+      bool backClick = !rawRecorderIgnoreBackRelease && buttonBack.isClick();
+
+      if (rawRecorderStopped) {
+        if (downClick) {
+          if (rawRecorderStoppedFile.length() > 0 && SD.exists(rawRecorderStoppedFile)) {
+            SD.remove(rawRecorderStoppedFile);
+          }
+          rawRecorderStopped = false;
+          rawRecorderStoppedFile = "";
+          rawRecorderLastFile = "";
+          rawRecorderSavedCount = 0;
+          rawRecorderEdgeCount = 0;
+          resetRawRecorderSpectrum();
+          OLED_printRawRecorder();
+        } else if (upClick) {
+          display.clearDisplay();
+          display.drawBitmap(16, 6, image_DolphinSaved_bits, 92, 58, SH110X_WHITE);
+          display.setTextColor(SH110X_WHITE);
+          display.setCursor(6, 16);
+          display.print("Saved");
+          display.display();
+          delay(1000);
+          rawRecorderStopped = false;
+          rawRecorderStoppedFile = "";
+          rawRecorderLastFile = "";
+          rawRecorderSavedCount = 0;
+          rawRecorderEdgeCount = 0;
+          resetRawRecorderSpectrum();
+          OLED_printRawRecorder();
+        } else if (backClick) {
+          menuState = menuMain;
+          resetButtonStates();
+          OLED_printSubGHzMenu(display, menuIndex);
+        } else if (okClick) {
+          playRawRecorderFile(rawRecorderStoppedFile);
+          OLED_printRawRecorder();
+          resetButtonStates();
+        }
+        continue;
+      }
 
       if (!rawRecorderRunning && upClick) {
+        stepRawRecorderRssiThreshold();
+        OLED_printRawRecorder();
+      }
+      if (!rawRecorderRunning && downClick) {
         stepFrequency(1);
         setupCC1101();
         rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
         rawRecorderPrevEdgeUs = micros();
         rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
         rawRecorderEdgeCount = 0;
+        resetRawRecorderSpectrum();
         OLED_printRawRecorder();
       }
-      if (!rawRecorderRunning && downClick) {
-        stepFrequency(-1);
-        setupCC1101();
-        rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
-        rawRecorderPrevEdgeUs = micros();
-        rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
-        rawRecorderEdgeCount = 0;
-        OLED_printRawRecorder();
-      }
-      if (buttonBack.isClick()) {
+      if (backClick) {
         if (rawRecorderRunning) {
           stopRawRecorderSession(true, false);
           rawRecorderRunning = false;
@@ -463,13 +542,17 @@ void runSubGHz() {
         if (!rawRecorderRunning) {
           if (startRawRecorderSession()) {
             rawRecorderRunning = true;
+            rawRecorderStopped = false;
+            resetRawRecorderSpectrum();
           } else {
             ExplorerShowSDError(display, 700);
           }
         } else {
+          String stoppedFile = rawRecorderSessionFile;
           stopRawRecorderSession(true, false);
           rawRecorderRunning = false;
-          rawRecorderSavedCount = 0;
+          rawRecorderStopped = true;
+          rawRecorderStoppedFile = stoppedFile;
         }
         rawRecorderLastDraw = 0;
         OLED_printRawRecorder();
@@ -509,11 +592,31 @@ void runSubGHz() {
         OLED_printSubGHzMenu(display, menuIndex);
       }
     } else if (menuState == menuTransmit && !subExplorer.inExplorer) {
-      if (buttonOK.isClick()) {
+      if (transmitIgnoreOkRelease) {
+        if (digitalRead(BUTTON_OK) == LOW) {
+          (void)buttonOK.isClick();
+        } else {
+          transmitIgnoreOkRelease = false;
+          buttonOK.resetStates();
+        }
+      }
+      if (transmitIgnoreBackRelease) {
+        if (digitalRead(BUTTON_BACK) == LOW) {
+          (void)buttonBack.isClick();
+        } else {
+          transmitIgnoreBackRelease = false;
+          buttonBack.resetStates();
+        }
+      }
+
+      bool okClick = !transmitIgnoreOkRelease && buttonOK.isClick();
+      bool backClick = !transmitIgnoreBackRelease && buttonBack.isClick();
+
+      if (okClick) {
         sendSynthKey(&keyData1);
         restoreReceiveMode();
       }
-      if (buttonBack.isClick()) {
+      if (backClick) {
         subExplorer.inExplorer = true;
         resetButtonStates();
         ExplorerDraw(subExplorer, display);
@@ -827,17 +930,116 @@ void OLED_printWaitingSignal() {
 
 void OLED_printRawRecorder() {
   display.clearDisplay();
-  display.drawBitmap(0, 4, image_DolphinReceive_bits, 97, 61, SH110X_WHITE);
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(72, 13);
-  display.print(String(frequency, 2) + "MHz");
-  display.setCursor(65, 37);
-  display.println(rawRecorderRunning ? F("Record...") : F("Press OK."));
-  display.setCursor(65, 46);
-  display.println(String(F("Frames:")) + String(rawRecorderSavedCount));
+
+  display.setCursor(5, 3);
+  display.print(String(frequency, 2) + F("MHz"));
+  display.drawRect(66, 2, 2, 9, 1);
+
+  display.setCursor(76, 3);
+  display.print(F("RSSI:"));
+  display.print((int)rawRecorderRssiThreshold);
+
+  display.drawRect(10, 13, 108, 37, SH110X_WHITE);
+  if (rawRecorderRunning || rawRecorderStopped) {
+    drawRawRecorderSpectrum(12, 15, 104, 33);
+  }
+
+  float filterPct = (rawRecorderRssiThreshold - RAW_REC_MIN_RSSI) / (RAW_REC_MAX_RSSI - RAW_REC_MIN_RSSI);
+  if (filterPct < 0.0f) filterPct = 0.0f;
+  if (filterPct > 1.0f) filterPct = 1.0f;
+  uint8_t arrowY = 45 - (uint8_t)(filterPct * 16.0f + 0.5f);
+  display.drawBitmap(120, arrowY, image_ArrowLeft_bits, 3, 5, SH110X_WHITE);
+  drawRawRecorderButton();
   display.display();
+}
+
+void drawRawRecorderButton() {
+  if (rawRecorderStopped) {
+    display.fillRoundRect(1, 52, 41, 12, 2, SH110X_WHITE);
+    display.fillRect(1, 54, 41, 10, SH110X_WHITE);
+    display.fillRoundRect(44, 52, 41, 12, 2, SH110X_WHITE);
+    display.fillRect(44, 54, 41, 10, SH110X_WHITE);
+    display.fillRoundRect(87, 52, 40, 12, 2, SH110X_WHITE);
+    display.fillRect(87, 54, 40, 10, SH110X_WHITE);
+
+    display.setTextColor(SH110X_BLACK);
+    display.setCursor(3, 55);
+    display.print("Erase");
+    display.drawBitmap(35, 58, image_ArrowDown_bits, 5, 3, SH110X_BLACK);
+
+    display.setCursor(47, 55);
+    display.print("Play");
+    display.drawBitmap(73, 54, image_REC_bits, 9, 9, SH110X_BLACK);
+
+    display.setCursor(92, 55);
+    display.print("Save");
+    display.drawBitmap(118, 57, image_ArrowUp_bits, 5, 3, SH110X_BLACK);
+    display.setTextColor(SH110X_WHITE);
+    return;
+  }
+
+  const char* label = rawRecorderRunning ? "Stop" : "REC";
+  const uint8_t textW = strlen(label) * 6;
+  const uint8_t iconW = 9;
+  const uint8_t iconH = 9;
+  const uint8_t gap = 3;
+  const uint8_t contentW = textW + gap + iconW;
+  const uint8_t padX = 5;
+  const uint8_t x = (SCREEN_WIDTH - (contentW + padX * 2)) / 2;
+  const uint8_t y = 52;
+  const uint8_t w = contentW + padX * 2;
+  const uint8_t h = 12;
+
+  display.fillRoundRect(x, y, w, h, 2, SH110X_WHITE);
+  display.fillRect(x, y + 2, w, h - 2, SH110X_WHITE);
+
+  const uint8_t textX = x + padX;
+  const uint8_t iconX = textX + textW + gap;
+  display.setTextColor(SH110X_BLACK);
+  display.setCursor(textX, y + ((strcmp(label, "REC") == 0) ? 3 : 2));
+  display.print(label);
+  display.drawBitmap(iconX, y + 2, image_REC_bits, iconW, iconH, SH110X_BLACK);
+  display.setTextColor(SH110X_WHITE);
+}
+
+void drawRawRecorderSpectrum(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
+  const uint8_t barCount = min((uint8_t)sizeof(rawRecorderSpectrumVals), (uint8_t)(w / 2));
+
+  if (rawRecorderRunning) {
+    for (uint8_t i = 0; i < barCount - 1; i++) {
+      rawRecorderSpectrumVals[i] = rawRecorderSpectrumVals[i + 1];
+    }
+
+    float rssi = ELECHOUSE_cc1101.getRssi();
+    if (rssi < -100.0f) rssi = -100.0f;
+    if (rssi > -30.0f) rssi = -30.0f;
+    rawRecorderSpectrumVals[barCount - 1] = 1 + (uint8_t)(((rssi + 100.0f) * (h - 1)) / 70.0f);
+  }
+
+  for (uint8_t i = 0; i < barCount; i++) {
+    uint8_t bar = rawRecorderSpectrumVals[i];
+    if (bar > 0) {
+      uint8_t px = x + i * 2;
+      display.drawFastVLine(px, y + h - bar, bar, SH110X_WHITE);
+      display.drawFastVLine(px + 1, y + h - bar, bar, SH110X_WHITE);
+    }
+  }
+}
+
+void resetRawRecorderSpectrum() {
+  for (uint8_t i = 0; i < sizeof(rawRecorderSpectrumVals); i++) {
+    rawRecorderSpectrumVals[i] = 0;
+  }
+}
+
+void stepRawRecorderRssiThreshold() {
+  rawRecorderRssiThreshold += RAW_REC_RSSI_STEP;
+  if (rawRecorderRssiThreshold > RAW_REC_MAX_RSSI) {
+    rawRecorderRssiThreshold = RAW_REC_MIN_RSSI;
+  }
 }
 
 void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
@@ -1378,10 +1580,278 @@ static bool sendRawBlock(const String& block) {
   return true;
 }
 
+static void updateRawPlaybackStopFromPins() {
+  bool okDown = digitalRead(BUTTON_OK) == LOW;
+  bool backDown = digitalRead(BUTTON_BACK) == LOW;
+
+  if (rawPlaybackIgnoreOkRelease) {
+    if (!okDown) {
+      rawPlaybackIgnoreOkRelease = false;
+    }
+  } else if (okDown) {
+    rawPlaybackOkWasPressed = true;
+  }
+
+  if (rawPlaybackIgnoreBackRelease) {
+    if (!backDown) {
+      rawPlaybackIgnoreBackRelease = false;
+    }
+  } else if (backDown) {
+    rawPlaybackBackWasPressed = true;
+  }
+
+  if ((rawPlaybackOkWasPressed && !okDown) ||
+      (rawPlaybackBackWasPressed && !backDown)) {
+    rawPlaybackStopRequestedFlag = true;
+  }
+}
+
+static bool rawPlaybackStopRequested() {
+  buttonOK.tick();
+  buttonBack.tick();
+  updateRawPlaybackStopFromPins();
+  return rawPlaybackStopRequestedFlag;
+}
+
+void drawRawPlaybackWave(float phase, uint8_t progressPct) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(5, 3);
+  display.print(String(frequency, 2) + F("MHz"));
+
+  if (progressPct > 100) progressPct = 100;
+  String progress = String(progressPct) + F("%");
+  display.setCursor(123 - progress.length() * 6, 3);
+  display.print(progress);
+
+  display.drawRect(10, 13, 108, 37, SH110X_WHITE);
+  const uint8_t midY = 31;
+  int lastX = 12;
+  int lastY = midY + (int)(sinf(phase * 0.18f) * 10.0f);
+  for (uint8_t x = 2; x < 104; x += 2) {
+    float angle = ((float)x + phase) * 0.18f;
+    int y = midY + (int)(sinf(angle) * 10.0f);
+    display.drawLine(lastX, lastY, 12 + x, y, SH110X_WHITE);
+    display.drawLine(lastX, lastY - 1, 12 + x, y - 1, SH110X_WHITE);
+    display.drawLine(lastX, lastY + 1, 12 + x, y + 1, SH110X_WHITE);
+    lastX = 12 + x;
+    lastY = y;
+  }
+
+  const char* label = "Stop";
+  const uint8_t textW = strlen(label) * 6;
+  const uint8_t iconW = 9;
+  const uint8_t iconH = 9;
+  const uint8_t gap = 3;
+  const uint8_t contentW = textW + gap + iconW;
+  const uint8_t padX = 5;
+  const uint8_t btnX = (SCREEN_WIDTH - (contentW + padX * 2)) / 2;
+  const uint8_t btnY = 52;
+  const uint8_t btnW = contentW + padX * 2;
+  const uint8_t btnH = 12;
+
+  display.fillRoundRect(btnX, btnY, btnW, btnH, 2, SH110X_WHITE);
+  display.fillRect(btnX, btnY + 2, btnW, btnH - 2, SH110X_WHITE);
+  display.setTextColor(SH110X_BLACK);
+  display.setCursor(btnX + padX, btnY + 3);
+  display.print(label);
+  display.drawBitmap(btnX + padX + textW + gap, btnY + 2, image_REC_bits, iconW, iconH, SH110X_BLACK);
+  display.setTextColor(SH110X_WHITE);
+  display.display();
+}
+
+static void setRawPlaybackTarget(float targetPct) {
+  if (targetPct > 100.0f) targetPct = 100.0f;
+  if (targetPct < rawPlaybackTargetPct) targetPct = rawPlaybackTargetPct;
+  rawPlaybackTargetPct = targetPct;
+}
+
+static void pumpRawPlaybackAnimation(bool force = false) {
+  if (!rawPlaybackActive) return;
+
+  unsigned long now = millis();
+  if (!force && now - rawPlaybackLastDrawMs < 18) return;
+  rawPlaybackLastDrawMs = now;
+
+  float delta = rawPlaybackTargetPct - rawPlaybackShownPct;
+  rawPlaybackShownPct += delta * 0.16f;
+  if (fabs(delta) < 0.35f) {
+    rawPlaybackShownPct = rawPlaybackTargetPct;
+  }
+
+  float phase = (float)(now - rawPlaybackStartMs) * 0.1f;
+  drawRawPlaybackWave(phase, (uint8_t)(rawPlaybackShownPct + 0.5f));
+}
+
+static void rawPlaybackAnimationTask(void* parameter) {
+  (void)parameter;
+  while (rawPlaybackActive) {
+    updateRawPlaybackStopFromPins();
+    pumpRawPlaybackAnimation();
+    delay(8);
+  }
+  rawPlaybackTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
+static void startRawPlaybackAnimationTask() {
+  if (rawPlaybackTaskHandle != nullptr) return;
+  xTaskCreatePinnedToCore(
+    rawPlaybackAnimationTask,
+    "raw_play_anim",
+    4096,
+    nullptr,
+    1,
+    &rawPlaybackTaskHandle,
+    0
+  );
+}
+
+static void stopRawPlaybackAnimationTask() {
+  rawPlaybackActive = false;
+  unsigned long startMs = millis();
+  while (rawPlaybackTaskHandle != nullptr && millis() - startMs < 120) {
+    delay(4);
+  }
+}
+
+static void armRawPlaybackReleaseGuards() {
+  if (digitalRead(BUTTON_OK) == LOW) {
+    rawRecorderIgnoreOkRelease = true;
+    transmitIgnoreOkRelease = true;
+  }
+  if (digitalRead(BUTTON_BACK) == LOW) {
+    rawRecorderIgnoreBackRelease = true;
+    transmitIgnoreBackRelease = true;
+  }
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+}
+
+static void finishRawPlaybackAnimation(uint16_t durationMs) {
+  setRawPlaybackTarget(100.0f);
+  unsigned long startMs = millis();
+  while (!rawPlaybackStopRequested() && millis() - startMs < durationMs) {
+    delay(18);
+  }
+}
+
+static void rawPlaybackDelayMicroseconds(unsigned int durationUs) {
+  delayMicroseconds(durationUs);
+}
+
+bool playRawRecorderFile(const String& fileName) {
+  rawPlaybackActive = false;
+  rawPlaybackStopRequestedFlag = false;
+  rawPlaybackOkWasPressed = false;
+  rawPlaybackBackWasPressed = false;
+  rawPlaybackIgnoreOkRelease = false;
+  rawPlaybackIgnoreBackRelease = false;
+  rawPlaybackShownPct = 0.0f;
+  rawPlaybackTargetPct = 0.0f;
+  rawPlaybackStartMs = millis();
+  rawPlaybackLastDrawMs = 0;
+
+  if (fileName.length() == 0 || !SD.exists(fileName)) {
+    OLED_printError(F("No RAW file"), true);
+    delay(600);
+    return false;
+  }
+
+  rawPlaybackActive = true;
+  rawPlaybackIgnoreOkRelease = digitalRead(BUTTON_OK) == LOW;
+  rawPlaybackIgnoreBackRelease = digitalRead(BUTTON_BACK) == LOW;
+  drawRawPlaybackWave(0, 0);
+  startRawPlaybackAnimationTask();
+
+  File countFile = SD.open(fileName, FILE_READ);
+  if (!countFile) {
+    stopRawPlaybackAnimationTask();
+    OLED_printError(F("Open failed"), true);
+    delay(600);
+    return false;
+  }
+
+  int totalBlocks = 0;
+  while (countFile.available()) {
+    String line = countFile.readStringUntil('\n');
+    line.trim();
+    if (line.startsWith("RAW_Data:")) totalBlocks++;
+  }
+  countFile.close();
+
+  if (!initRfModule("tx", frequency)) {
+    stopRawPlaybackAnimationTask();
+    rawPlaybackActive = false;
+    OLED_printError(F("TX init fail"), true);
+    delay(800);
+    restoreReceiveMode();
+    return false;
+  }
+
+  ELECHOUSE_cc1101.setModulation(2);
+  ELECHOUSE_cc1101.setRxBW(270.0);
+  ELECHOUSE_cc1101.setDeviation(0);
+  ELECHOUSE_cc1101.setDRate(10);
+  ELECHOUSE_cc1101.setPA(12);
+  ELECHOUSE_cc1101.SetTx();
+  pinMode(bruceConfigPins.CC1101_bus.io0, OUTPUT);
+
+  File rawFile = SD.open(fileName, FILE_READ);
+  if (!rawFile) {
+    stopRawPlaybackAnimationTask();
+    rawPlaybackActive = false;
+    deinitRfModule();
+    restoreReceiveMode();
+    OLED_printError(F("Open failed"), true);
+    delay(600);
+    return false;
+  }
+
+  int sentBlocks = 0;
+
+  if (totalBlocks <= 0) {
+    finishRawPlaybackAnimation(450);
+  }
+
+  while (rawFile.available()) {
+    if (rawPlaybackStopRequested()) break;
+
+    String line = rawFile.readStringUntil('\n');
+    line.trim();
+    if (!line.startsWith("RAW_Data:")) continue;
+
+    String block = line.substring(9);
+    block.trim();
+    float targetPct = (totalBlocks > 0) ? ((float)(sentBlocks + 1) * 100.0f / (float)totalBlocks) : 100.0f;
+    setRawPlaybackTarget(targetPct);
+    if (sendRawBlock(block)) {
+      sentBlocks++;
+    }
+  }
+  rawFile.close();
+
+  if (!rawPlaybackStopRequestedFlag) {
+    finishRawPlaybackAnimation(180);
+  }
+
+  stopRawPlaybackAnimationTask();
+  armRawPlaybackReleaseGuards();
+  deinitRfModule();
+  restoreReceiveMode();
+
+  return sentBlocks > 0 || totalBlocks <= 0;
+}
+
 
 void sendSynthKey(tpKeyData* kd) {
   Serial.println(F("Starting transmission"));
-  OLED_printKey(kd, subExplorer.selectedFile, true);
+  String protocol = getTypeName(kd->type);
+  if (protocol != "RAW") {
+    OLED_printKey(kd, subExplorer.selectedFile, true);
+  }
 
   Serial.print(F("Transmitting key, protocol: "));
   Serial.print(getTypeName(kd->type));
@@ -1395,8 +1865,6 @@ void sendSynthKey(tpKeyData* kd) {
   Serial.print(kd->frequency);
   Serial.println(F(" MHz"));
 
-  uint32_t frequency = kd->frequency * 1000000;
-  String protocol = getTypeName(kd->type);
   String data = (protocol == "RAW" && loadedRawData.length() > 0) ? loadedRawData : String(kd->rawData);
   uint64_t key = 0;
   for (int i = 0; i < 8; i++) {
@@ -1408,6 +1876,14 @@ void sendSynthKey(tpKeyData* kd) {
   float dataRate = 10;
 
   int rcswitch_protocol_no = 1;
+
+  if (protocol == "RAW" && subExplorer.selectedFile.length() > 0) {
+    frequency = kd->frequency;
+    String rawPath = subExplorer.currentDir + "/" + subExplorer.selectedFile;
+    playRawRecorderFile(rawPath);
+    OLED_printKey(kd, subExplorer.selectedFile);
+    return;
+  }
 
   if (!initRfModule("tx", kd->frequency)) {
     Serial.println(F("Failed to initialize CC1101"));
@@ -1441,11 +1917,31 @@ void sendSynthKey(tpKeyData* kd) {
   bool transmissionSuccess = false;
 
   if (protocol == "RAW") {
-    display.setCursor(67, 54);
-    display.print("Sending...");
-    display.display();
-
     int sentBlocks = 0;
+    int totalBlocks = 0;
+
+    int countStart = 0;
+    while (countStart < data.length()) {
+      int countEnd = data.indexOf('\n', countStart);
+      if (countEnd < 0) countEnd = data.length();
+      String block = data.substring(countStart, countEnd);
+      block.trim();
+      if (block.length() > 0) totalBlocks++;
+      countStart = countEnd + 1;
+    }
+
+    rawPlaybackActive = true;
+    rawPlaybackStopRequestedFlag = false;
+    rawPlaybackOkWasPressed = false;
+    rawPlaybackBackWasPressed = false;
+    rawPlaybackIgnoreOkRelease = digitalRead(BUTTON_OK) == LOW;
+    rawPlaybackIgnoreBackRelease = digitalRead(BUTTON_BACK) == LOW;
+    rawPlaybackShownPct = 0.0f;
+    rawPlaybackTargetPct = 0.0f;
+    rawPlaybackStartMs = millis();
+    rawPlaybackLastDrawMs = 0;
+    drawRawPlaybackWave(0, 0);
+    startRawPlaybackAnimationTask();
 
     bool sentFromFile = false;
     if (subExplorer.selectedFile.length() > 0) {
@@ -1473,11 +1969,21 @@ void sendSynthKey(tpKeyData* kd) {
         if (lineEnd < 0) lineEnd = data.length();
         String block = data.substring(lineStart, lineEnd);
         lineStart = lineEnd + 1;
+        block.trim();
+        if (block.length() == 0) continue;
+        float targetPct = (totalBlocks > 0) ? ((float)(sentBlocks + 1) * 100.0f / (float)totalBlocks) : 100.0f;
+        setRawPlaybackTarget(targetPct);
         if (sendRawBlock(block)) {
           sentBlocks++;
         }
       }
     }
+
+    if (!rawPlaybackStopRequestedFlag) {
+      finishRawPlaybackAnimation(180);
+    }
+    stopRawPlaybackAnimationTask();
+    armRawPlaybackReleaseGuards();
 
     transmissionSuccess = (sentBlocks > 0);
   } else if (protocol == "RcSwitch") {
@@ -1546,11 +2052,16 @@ void RCSwitch_RAW_send(int *ptrtransmittimings) {
     if (nRepeatTransmit < 1) nRepeatTransmit = 1;
     if (nRepeatTransmit > 6) nRepeatTransmit = 6;
   }
+  if (rawPlaybackActive) {
+    nRepeatTransmit = 1;
+  }
 
   for (int nRepeat = 0; nRepeat < nRepeatTransmit; nRepeat++) {
+    if (rawPlaybackActive && rawPlaybackStopRequested()) break;
     unsigned int currenttiming = 0;
     bool level = true;
     while (ptrtransmittimings[currenttiming]) {
+      if (rawPlaybackActive && rawPlaybackStopRequested()) break;
       int dur = ptrtransmittimings[currenttiming];
       bool lvl;
       unsigned int t;
@@ -1563,11 +2074,11 @@ void RCSwitch_RAW_send(int *ptrtransmittimings) {
         level = !level;
       }
       digitalWrite(nTransmitterPin, lvl ? HIGH : LOW);
-      delayMicroseconds(t);
+      rawPlaybackDelayMicroseconds(t);
       currenttiming++;
     }
     digitalWrite(nTransmitterPin, LOW);
-    delayMicroseconds(8000);
+    rawPlaybackDelayMicroseconds(8000);
   }
 }
 

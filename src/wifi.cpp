@@ -25,6 +25,8 @@ bool inEvilPortal = false, apRunning = false;
 bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
 bool inWardriving = false, isWardriving = false;
 bool inPacketsMenu = false, isPacketScanning = false, isPacketViewing = false;
+bool deauthScanStarted = false, packetsScanStarted = false;
+bool wifiIgnoreButtonsUntilRelease = false;
 int foundNetworks = 0;
 String ssidList[10];
 const byte BEACON_LOG_LINES = 5;
@@ -333,6 +335,90 @@ void displayDeauthActive(String ssid) {
   display.setCursor(4, display.getCursorY());
   display.println(ssid.substring(0, 15));
   display.display();
+}
+
+void displayWiFiScanning() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(3, 3);
+  display.println(F("Scanning:"));
+  display.println(F("---------------------"));
+  display.println(F("..."));
+  display.display();
+}
+
+void resetWiFiButtonStates() {
+  buttonUp.resetStates();
+  buttonDown.resetStates();
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+}
+
+bool anyWiFiButtonPressed() {
+  return digitalRead(BUTTON_UP) == LOW ||
+         digitalRead(BUTTON_DOWN) == LOW ||
+         digitalRead(BUTTON_OK) == LOW ||
+         digitalRead(BUTTON_BACK) == LOW;
+}
+
+void ignoreWiFiButtonsUntilRelease() {
+  wifiIgnoreButtonsUntilRelease = true;
+  resetWiFiButtonStates();
+}
+
+bool handleWiFiButtonReleaseLock() {
+  if (!wifiIgnoreButtonsUntilRelease) return false;
+
+  resetWiFiButtonStates();
+  if (!anyWiFiButtonPressed()) {
+    wifiIgnoreButtonsUntilRelease = false;
+  }
+  return true;
+}
+
+void startWiFiNetworkScan(bool &scanStarted) {
+  if (scanStarted) return;
+
+  foundNetworks = 0;
+  WiFi.scanDelete();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  WiFi.scanNetworks(true, true);
+  scanStarted = true;
+}
+
+void cancelWiFiNetworkScan(bool &scanStarted) {
+  WiFi.scanDelete();
+  scanStarted = false;
+  foundNetworks = 0;
+}
+
+void copyWiFiScanResults(int scannedNetworks) {
+  foundNetworks = min(scannedNetworks, 10);
+  for (int i = 0; i < foundNetworks; i++) {
+    ssidList[i] = WiFi.SSID(i);
+    wifi_ap_record_t *record = (wifi_ap_record_t *)WiFi.getScanInfoByIndex(i);
+    if (record) {
+      memcpy(&apRecords[i], record, sizeof(wifi_ap_record_t));
+    }
+  }
+}
+
+void showNoWiFiNetworksAndExit(bool &scanStarted, bool &inSubmenu) {
+  cancelWiFiNetworkScan(scanStarted);
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(3, 3);
+  display.print(F("No networks found"));
+  display.display();
+  delay(2000);
+  inSubmenu = false;
+  WiFi.mode(WIFI_OFF);
+  ignoreWiFiButtonsUntilRelease();
+  displayWiFiMenu(display, wifiMenuIndex);
+  Serial.println(F("No networks found"));
 }
 
 void displayWardrivingPrompt() {
@@ -824,45 +910,48 @@ void handleDeauthSubmenu() {
   buttonBack.tick();
 
   if (isScanning) {
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SH110X_WHITE);
-    display.setCursor(3, 3);
-    display.println(F("Scanning:"));
-    display.println(F("---------------------"));
-    display.println(F("..."));
-    display.display();
-
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    foundNetworks = WiFi.scanNetworks(false, true);
-    if (foundNetworks > 0) {
-      isScanning = false;
-      deauthMenuIndex = 0;
-      for (int i = 0; i < min(foundNetworks, 10); i++) {
-        ssidList[i] = WiFi.SSID(i);
-        wifi_ap_record_t *record = (wifi_ap_record_t *)WiFi.getScanInfoByIndex(i);
-        if (record) {
-          memcpy(&apRecords[i], record, sizeof(wifi_ap_record_t));
-        }
-      }
-    } else {
-      display.clearDisplay();
-      display.setTextSize(1);
-      display.setTextColor(SH110X_WHITE);
-      display.setCursor(3, 3);
-      display.print(F("No networks found"));
-      display.display();
-      delay(2000);
+    if (buttonBack.isClick()) {
+      cancelWiFiNetworkScan(deauthScanStarted);
       isScanning = false;
       inDeauthMenu = false;
+      WiFi.mode(WIFI_OFF);
+      ignoreWiFiButtonsUntilRelease();
       displayWiFiMenu(display, wifiMenuIndex);
-      Serial.println(F("No networks found"));
       return;
     }
+
+    displayWiFiScanning();
+    startWiFiNetworkScan(deauthScanStarted);
+
+    int scanResult = WiFi.scanComplete();
+    if (scanResult == -1) {
+      resetWiFiButtonStates();
+      return;
+    }
+    if (scanResult > 0) {
+      copyWiFiScanResults(scanResult);
+      deauthScanStarted = false;
+      isScanning = false;
+      deauthMenuIndex = 0;
+      ignoreWiFiButtonsUntilRelease();
+      return;
+    }
+
+    showNoWiFiNetworksAndExit(deauthScanStarted, inDeauthMenu);
+    isScanning = false;
+    return;
   }
 
   if (isDeauthing) {
+    if (digitalRead(BUTTON_BACK) == LOW) {
+      isDeauthing = false;
+      inDeauthMenu = false;
+      WiFi.mode(WIFI_OFF);
+      ignoreWiFiButtonsUntilRelease();
+      displayWiFiMenu(display, wifiMenuIndex);
+      return;
+    }
+
     displayDeauthActive(ssidList[deauthMenuIndex]);
     uint8_t targetChannel = apRecords[deauthMenuIndex].primary;
     uint8_t *apMAC = apRecords[deauthMenuIndex].bssid;
@@ -879,6 +968,7 @@ void handleDeauthSubmenu() {
       isDeauthing = false;
       inDeauthMenu = false;
       WiFi.mode(WIFI_OFF);
+      ignoreWiFiButtonsUntilRelease();
       displayWiFiMenu(display, wifiMenuIndex);
     }
 
@@ -915,9 +1005,11 @@ void handleDeauthSubmenu() {
 
   if (buttonBack.isClick()) {
     isScanning = false;
+    deauthScanStarted = false;
     inDeauthMenu = false;
     WiFi.scanDelete();
     WiFi.mode(WIFI_OFF);
+    ignoreWiFiButtonsUntilRelease();
     displayWiFiMenu(display, wifiMenuIndex);
   }
 }
@@ -929,42 +1021,36 @@ void handlePacketsMenu() {
   buttonBack.tick();
 
   if (isPacketScanning) {
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SH110X_WHITE);
-    display.setCursor(3, 3);
-    display.println(F("Scanning:"));
-    display.println(F("---------------------"));
-    display.println(F("..."));
-    display.display();
-
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    foundNetworks = WiFi.scanNetworks(false, true);
-    if (foundNetworks > 0) {
-      isPacketScanning = false;
-      packetsMenuIndex = 0;
-      for (int i = 0; i < min(foundNetworks, 10); i++) {
-        ssidList[i] = WiFi.SSID(i);
-        wifi_ap_record_t *record = (wifi_ap_record_t *)WiFi.getScanInfoByIndex(i);
-        if (record) {
-          memcpy(&apRecords[i], record, sizeof(wifi_ap_record_t));
-        }
-      }
-    } else {
-      display.clearDisplay();
-      display.setTextSize(1);
-      display.setTextColor(SH110X_WHITE);
-      display.setCursor(3, 3);
-      display.print(F("No networks found"));
-      display.display();
-      delay(2000);
+    if (buttonBack.isClick()) {
+      cancelWiFiNetworkScan(packetsScanStarted);
       isPacketScanning = false;
       inPacketsMenu = false;
+      WiFi.mode(WIFI_OFF);
+      ignoreWiFiButtonsUntilRelease();
       displayWiFiMenu(display, wifiMenuIndex);
-      Serial.println(F("No networks found"));
       return;
     }
+
+    displayWiFiScanning();
+    startWiFiNetworkScan(packetsScanStarted);
+
+    int scanResult = WiFi.scanComplete();
+    if (scanResult == -1) {
+      resetWiFiButtonStates();
+      return;
+    }
+    if (scanResult > 0) {
+      copyWiFiScanResults(scanResult);
+      packetsScanStarted = false;
+      isPacketScanning = false;
+      packetsMenuIndex = 0;
+      ignoreWiFiButtonsUntilRelease();
+      return;
+    }
+
+    showNoWiFiNetworksAndExit(packetsScanStarted, inPacketsMenu);
+    isPacketScanning = false;
+    return;
   }
 
   if (isPacketViewing) {
@@ -973,12 +1059,14 @@ void handlePacketsMenu() {
       packetsStopSniffing();
       isPacketViewing = false;
       isPacketScanning = true;
+      ignoreWiFiButtonsUntilRelease();
       return;
     }
     if (buttonBack.isClick()) {
       packetsStopSniffing();
       isPacketViewing = false;
       inPacketsMenu = false;
+      ignoreWiFiButtonsUntilRelease();
       displayWiFiMenu(display, wifiMenuIndex);
     }
     return;
@@ -1019,9 +1107,11 @@ void handlePacketsMenu() {
 
   if (buttonBack.isClick()) {
     isPacketScanning = false;
+    packetsScanStarted = false;
     inPacketsMenu = false;
     WiFi.scanDelete();
     WiFi.mode(WIFI_OFF);
+    ignoreWiFiButtonsUntilRelease();
     displayWiFiMenu(display, wifiMenuIndex);
   }
 }
@@ -1031,6 +1121,8 @@ void handleWiFiSubmenu() {
   buttonDown.tick();
   buttonOK.tick();
   buttonBack.tick();
+
+  if (handleWiFiButtonReleaseLock()) return;
 
   if (inEvilPortal) {
     if (inPortalExplorer) {
@@ -1130,6 +1222,7 @@ void handleWiFiSubmenu() {
     if (wifiMenuIndex == 0) {
       inDeauthMenu = true;
       isScanning = true;
+      deauthScanStarted = false;
       WiFi.mode(WIFI_STA);
       WiFi.disconnect();
     } else if (wifiMenuIndex == 1) {
@@ -1168,6 +1261,7 @@ void handleWiFiSubmenu() {
       inPacketsMenu = true;
       isPacketScanning = true;
       isPacketViewing = false;
+      packetsScanStarted = false;
       packetsBssidSet = false;
       WiFi.mode(WIFI_STA);
       WiFi.disconnect();

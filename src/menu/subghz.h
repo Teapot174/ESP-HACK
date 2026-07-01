@@ -310,9 +310,18 @@ static const unsigned char PROGMEM image_DolphinWait_bits[] = {
   0x00,0x00,0x03,0xff,0xc0,0x00,0x00,0xc0,0x00,0x00,0x00,0xff,0x00,0x00,0x00,0x80
 };
 
+static const unsigned char PROGMEM image_REC_bits[] = {0x3e, 0x00, 0x41, 0x00, 0x9c, 0x80, 0xbe, 0x80, 0xbe, 0x80, 0xbe, 0x80, 0x9c, 0x80, 0x41, 0x00, 0x3e, 0x00};
+
+static const unsigned char PROGMEM image_ArrowLeft_bits[] = {0x20, 0x60, 0xe0, 0x60, 0x20};
+
+static const unsigned char PROGMEM image_ArrowUp_bits[] = {0x20, 0x70, 0xf8};
+
+static const unsigned char PROGMEM image_ArrowDown_bits[] = {0xf8, 0x70, 0x20};
+
+
 
 #define SUBGHZ_MENU_ITEM_COUNT 6
-static const char* subghzMenuItems[] = {"Read", "Send", "Analyzer", "Jammer", "Brute", "RAW"};
+static const char* subghzMenuItems[] = {"Read", "Send", "Analyzer", "Jammer", "Brute", "Read RAW"};
 
 inline void OLED_printSubGHzMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
   displayAnimatedMenu(display, subghzMenuItems, SUBGHZ_MENU_ITEM_COUNT, menuIndex, previousIndex);
