@@ -1047,13 +1047,17 @@ void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setCursor(1, 2);
+  uint8_t dataY = 14;
   if (fileName != "") {
     String st = fileName;
     if (st.length() > 16) st = st.substring(0, 16);
-    display.print("File: " + st);
+    display.setCursor(3, 3);
+    display.println("File: " + st);
+    dataY = display.getCursorY() + 3;
   } else {
-    display.print("Signal:");
+    display.setCursor(3, 3);
+    display.println("Signal:");
+    dataY = display.getCursorY() + 3;
   }
   String st = "";
   if (kd->type == kLINEAR) {
@@ -1069,18 +1073,21 @@ void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
       }
     }
   }
-  display.setCursor(1, 14);
-  display.print("Code: " + st);
+  display.setCursor(3, dataY);
+  display.println("Code: " + st);
   st = "Type: " + getTypeName(kd->type);
-  display.setCursor(1, 24);
-  display.print(st);
+  dataY = display.getCursorY() + 2;
+  display.setCursor(3, dataY);
+  display.println(st);
   st = "Freq: " + String(kd->frequency) + " MHz";
-  display.setCursor(1, 36);
-  display.print(st);
+  dataY = display.getCursorY() + 2;
+  display.setCursor(3, dataY);
+  display.println(st);
   if (kd->bitLength > 0) {
     st = "Bits: " + String(kd->bitLength);
-    display.setCursor(1, 48);
-    display.print(st);
+    dataY = display.getCursorY() + 2;
+    display.setCursor(3, dataY);
+    display.println(st);
   }
   if (isSending) {
     display.setCursor(67, 54);

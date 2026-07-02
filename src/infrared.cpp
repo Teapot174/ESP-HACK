@@ -394,12 +394,10 @@ void drawReadingScreen() {
     display.print(F("Waiting signal..."));
     display.drawBitmap(0, 12, image_InfraredLearnShort_bits, 128, 31, SH110X_WHITE);
   } else {
-    display.setCursor(1, 2);
-    display.print(F("Signal:"));
+    display.setCursor(3, 3);
+    display.println(F("Signal:"));
+    uint8_t dataY = display.getCursorY() + 3;
 
-    // Code
-    display.setCursor(1, 14);
-    display.print(F("Code: "));
     String code;
     if (results.decode_type == UNKNOWN) {
       rawcode = resultToRawArray(&results);
@@ -415,18 +413,17 @@ void drawReadingScreen() {
     } else {
       code = uint32ToString(results.address);
     }
-    display.print(code.length() > 16 ? code.substring(0, 16) : code);
+    display.setCursor(3, dataY);
+    display.println("Code: " + (code.length() > 16 ? code.substring(0, 16) : code));
 
-    // Type
-    display.setCursor(1, 24);
-    display.print(F("Type: "));
     String signalType = (results.decode_type == UNKNOWN ? "RAW" : typeToString(results.decode_type, results.repeat));
-    display.print(signalType.length() > 16 ? signalType.substring(0, 16) : signalType);
+    dataY = display.getCursorY() + 2;
+    display.setCursor(3, dataY);
+    display.println("Type: " + (signalType.length() > 16 ? signalType.substring(0, 16) : signalType));
 
-    // Bits
-    display.setCursor(1, 36);
-    display.print(F("Bits: "));
-    display.print(results.bits);
+    dataY = display.getCursorY() + 2;
+    display.setCursor(3, dataY);
+    display.println("Bits: " + String(results.bits));
 
     display.setCursor(17, 52);
     display.print(F("Hold OK to save."));
