@@ -25,8 +25,10 @@ bool inNRF24Submenu = false, inJammingMenu = false, inJammingActive = false, inN
 bool inNRF24InitError = false;
 byte nrf24MenuIndex = 0, nrf24ConfigIndex = 0, jammingModeIndex = 0, nrf24InitErrorReturnIndex = 0;
 const char* nrf24MenuItems[] = {"Jammer", "Spectrum", "Config"};
-const char* jammingModes[] = {"WiFi", "BLE", "BT", "USB", "Video", "RadioCH", "ALL"};
+const char* jammingModes[] = {"WiFi", "BLE", "Bluetooth", "USB", "Video", "RadioCH", "ALL"};
 const byte NRF24_MENU_ITEM_COUNT = 3, JAMMING_MODE_COUNT = 7;
+static const int16_t JAMMING_ANIMATION_STEP = 10;
+static const uint8_t JAMMING_FRAME_DELAY = 2;
 
 // Spectrum Analyzer
 #define SPECTRUM_CHANNELS 128
@@ -270,19 +272,48 @@ void displayNRF24Config() {
   display.display();
 }
 
-void displayJammingMenu() {
+void drawJammingMode(const char* mode, int16_t yOffset = 0) {
+  int16_t modeWidth = strlen(mode) * 12;
+  int16_t modeX = (128 - modeWidth) / 2;
+  display.setCursor(modeX, 25 + yOffset);
+  display.print(mode);
+}
+
+void displayJammingMenu(int previousIndex = -1, int8_t direction = 0) {
+  if (previousIndex >= 0 && direction != 0) {
+    const bool movingDown = direction > 0;
+
+    for (uint8_t step = 1; step <= JAMMING_ANIMATION_STEP; ++step) {
+      const int16_t outgoingY = movingDown
+        ? interpolateMenuY(0, -SCREEN_HEIGHT, step, JAMMING_ANIMATION_STEP)
+        : interpolateMenuY(0, SCREEN_HEIGHT, step, JAMMING_ANIMATION_STEP);
+      const int16_t incomingY = movingDown
+        ? interpolateMenuY(SCREEN_HEIGHT, 0, step, JAMMING_ANIMATION_STEP)
+        : interpolateMenuY(-SCREEN_HEIGHT, 0, step, JAMMING_ANIMATION_STEP);
+
+      display.clearDisplay();
+      display.setTextColor(1);
+      display.setTextSize(2);
+      display.setTextWrap(false);
+      drawJammingMode(jammingModes[previousIndex], outgoingY);
+      drawJammingMode(jammingModes[jammingModeIndex], incomingY);
+      display.display();
+      delay(JAMMING_FRAME_DELAY);
+    }
+    display.clearDisplay();
+    display.setTextColor(1);
+    display.setTextSize(2);
+    display.setTextWrap(false);
+    drawJammingMode(jammingModes[jammingModeIndex], 0);
+    display.display();
+    return;
+  }
+
   display.clearDisplay();
   display.setTextColor(1);
   display.setTextSize(2);
   display.setTextWrap(false);
-  int16_t modeWidth = strlen(jammingModes[jammingModeIndex]) * 12;
-  int16_t modeX = (128 - modeWidth) / 2, modeY = (64 - 16) / 2;
-  display.setCursor(modeX, modeY);
-  display.print(jammingModes[jammingModeIndex]);
-  display.setCursor(3, modeY);
-  display.print(F("<"));
-  display.setCursor(123 - 10, modeY);
-  display.print(F(">"));
+  drawJammingMode(jammingModes[jammingModeIndex], 0);
   display.display();
 }
 
@@ -434,12 +465,14 @@ void handleJammingMenu() {
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
 
   if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+    byte previousIndex = jammingModeIndex;
     jammingModeIndex = (jammingModeIndex - 1 + JAMMING_MODE_COUNT) % JAMMING_MODE_COUNT;
-    displayJammingMenu();
+    displayJammingMenu(previousIndex, -1);
   }
   if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+    byte previousIndex = jammingModeIndex;
     jammingModeIndex = (jammingModeIndex + 1) % JAMMING_MODE_COUNT;
-    displayJammingMenu();
+    displayJammingMenu(previousIndex, 1);
   }
   if (buttonOK.isClick()) {
     Serial.printf("Selected mode: %s\n", jammingModes[jammingModeIndex]);
