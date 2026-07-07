@@ -25,6 +25,44 @@ enum GamesState : byte {
 static GamesState gamesState = GAMES_MENU_STATE;
 
 namespace {
+constexpr unsigned long GAME_RELEASE_CLICK_MS = 700;
+
+struct ReleaseButtonState {
+  bool wasPressed;
+  unsigned long pressedAt;
+};
+
+void clearReleaseButtonState(ReleaseButtonState &state) {
+  state.wasPressed = false;
+  state.pressedAt = 0;
+}
+
+void primeReleaseButtonState(ReleaseButtonState &state, uint8_t pin) {
+  state.wasPressed = digitalRead(pin) == LOW;
+  state.pressedAt = state.wasPressed ? millis() : 0;
+}
+
+bool buttonReleasedOnceWithin(uint8_t pin, ReleaseButtonState &state, unsigned long maxPressMs = GAME_RELEASE_CLICK_MS) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+
+  if (pressed) {
+    if (!state.wasPressed) {
+      state.wasPressed = true;
+      state.pressedAt = now;
+    }
+    return false;
+  }
+
+  if (state.wasPressed) {
+    const bool releasedInTime = now - state.pressedAt <= maxPressMs;
+    clearReleaseButtonState(state);
+    return releasedInTime;
+  }
+
+  return false;
+}
+
 namespace Doom {
 #define _constants_h
 #define LEVEL_WIDTH_BASE 6
@@ -90,8 +128,8 @@ uint8_t fade = 0;
 double viewHeight = 0;
 double jogging = 0;
 bool fireWasPressed = false;
-bool okWasPressed = false;
-bool backWasPressed = false;
+ReleaseButtonState okReleaseState = {false, 0};
+ReleaseButtonState backReleaseState = {false, 0};
 unsigned long lastFireTime = 0;
 
 const static uint8_t PROGMEM bitMask[8] = {128, 64, 32, 16, 8, 4, 2, 1};
@@ -136,34 +174,8 @@ bool inputLeft() { return digitalRead(BUTTON_OK) == LOW; }
 bool inputRight() { return digitalRead(BUTTON_BACK) == LOW; }
 bool inputFire() { return digitalRead(BUTTON_DOWN) == LOW; }
 
-bool buttonPressedOnce(uint8_t pin, bool &wasPressed) {
-  const bool pressed = digitalRead(pin) == LOW;
-  if (pressed && !wasPressed) {
-    wasPressed = true;
-    return true;
-  }
-  if (!pressed) {
-    wasPressed = false;
-  }
-  return false;
-}
-
-bool buttonReleasedOnce(uint8_t pin, bool &wasPressed) {
-  const bool pressed = digitalRead(pin) == LOW;
-  if (pressed) {
-    wasPressed = true;
-    return false;
-  }
-  if (wasPressed) {
-    wasPressed = false;
-    return true;
-  }
-  return false;
-}
-
-bool inputOkPress() { return buttonPressedOnce(BUTTON_OK, okWasPressed); }
-bool inputBackPress() { return buttonPressedOnce(BUTTON_BACK, backWasPressed); }
-bool inputBackRelease() { return buttonReleasedOnce(BUTTON_BACK, backWasPressed); }
+bool inputOkRelease() { return buttonReleasedOnceWithin(BUTTON_OK, okReleaseState); }
+bool inputBackRelease() { return buttonReleasedOnceWithin(BUTTON_BACK, backReleaseState); }
 
 void jumpTo(uint8_t targetScene) {
   scene = targetScene;
@@ -681,8 +693,8 @@ void resetGame() {
   viewHeight = 0;
   jogging = 0;
   fireWasPressed = false;
-  okWasPressed = digitalRead(BUTTON_OK) == LOW;
-  backWasPressed = digitalRead(BUTTON_BACK) == LOW;
+  primeReleaseButtonState(okReleaseState, BUTTON_OK);
+  primeReleaseButtonState(backReleaseState, BUTTON_BACK);
   lastFireTime = 0;
 }
 
@@ -712,8 +724,8 @@ void beginPlay() {
   viewHeight = 0;
   jogging = 0;
   fireWasPressed = false;
-  okWasPressed = digitalRead(BUTTON_OK) == LOW;
-  backWasPressed = digitalRead(BUTTON_BACK) == LOW;
+  primeReleaseButtonState(okReleaseState, BUTTON_OK);
+  primeReleaseButtonState(backReleaseState, BUTTON_BACK);
   lastFireTime = 0;
   lastFrameTime = millis();
   scene = GAME_PLAY;
@@ -728,7 +740,7 @@ void tickIntro() {
   }
   if (inputBackRelease()) {
     stop();
-  } else if (inputOkPress()) {
+  } else if (inputOkRelease()) {
     beginPlay();
   }
 }
@@ -760,8 +772,6 @@ void tickPlay() {
     } else if (inputLeft()) {
       rotatePlayer(ROT_SPEED * delta);
     }
-    okWasPressed = digitalRead(BUTTON_OK) == LOW;
-    backWasPressed = digitalRead(BUTTON_BACK) == LOW;
 
     viewHeight = abs(sin((double)millis() * JOGGING_SPEED)) * 6 * jogging;
     const bool firePressed = inputFire();
@@ -782,10 +792,10 @@ void tickPlay() {
       fireWasPressed = false;
     }
   } else {
-    if (inputBackPress()) {
+    if (inputBackRelease()) {
       stop();
       return;
-    } else if (inputOkPress()) {
+    } else if (inputOkRelease()) {
       beginPlay();
       return;
     }
@@ -915,7 +925,6 @@ int birdScore = 0;
 unsigned long birdFrameCounter = 0;
 unsigned long birdFrameTime = 0;
 bool birdAwaitRestart = false;
-bool birdBackReadyForExit = true;
 
 constexpr byte TETRIS_BOARD_WIDTH = 10;
 constexpr byte TETRIS_BOARD_HEIGHT = 18;
@@ -982,7 +991,6 @@ uint16_t tetrisScore = 0;
 uint16_t tetrisDropInterval = TETRIS_INITIAL_DROP_MS;
 unsigned long tetrisDropTime = 0;
 bool tetrisAwaitRestart = false;
-bool tetrisBackReadyForExit = true;
 
 constexpr int PONG_PADDLE_HEIGHT = 16;
 constexpr int PONG_PADDLE_WIDTH = 3;
@@ -1004,6 +1012,23 @@ unsigned long pongFrameTime = 0;
 bool pongAwaitRestart = false;
 uint16_t pongPlayerScore = 0;
 uint16_t pongCpuScore = 0;
+ReleaseButtonState gameOkReleaseState = {false, 0};
+ReleaseButtonState gameBackReleaseState = {false, 0};
+
+void resetGameReleaseInputs() {
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+  primeReleaseButtonState(gameOkReleaseState, BUTTON_OK);
+  primeReleaseButtonState(gameBackReleaseState, BUTTON_BACK);
+}
+
+bool gameOkReleaseClick() {
+  return buttonReleasedOnceWithin(BUTTON_OK, gameOkReleaseState);
+}
+
+bool gameBackReleaseClick() {
+  return buttonReleasedOnceWithin(BUTTON_BACK, gameBackReleaseState);
+}
 
 void tetrisSetDisplayRotation(bool enabled) {
   display.setRotation(enabled ? 3 : 0);
@@ -1139,6 +1164,7 @@ void snakeGameOver() {
   }
 
   snakeAwaitRestart = true;
+  resetGameReleaseInputs();
   renderGameOverScreen();
 }
 
@@ -1245,7 +1271,6 @@ void birdReset() {
   birdFrameCounter = 0;
   birdFrameTime = millis();
   birdAwaitRestart = false;
-  birdBackReadyForExit = true;
 
   birdPipes[0].x = SCREEN_WIDTH * BIRD_SCALE_FACTOR;
   birdPipes[0].height = birdGeneratePipeHeight();
@@ -1307,8 +1332,7 @@ void birdGameOver() {
     delay(180);
   }
   birdAwaitRestart = true;
-  birdBackReadyForExit = false;
-  buttonBack.resetStates();
+  resetGameReleaseInputs();
   renderGameOverScreen();
 }
 
@@ -1519,8 +1543,7 @@ void tetrisResetGrid() {
 
 void tetrisGameOver() {
   tetrisAwaitRestart = true;
-  tetrisBackReadyForExit = false;
-  buttonBack.resetStates();
+  resetGameReleaseInputs();
   tetrisSetDisplayRotation(false);
   renderGameOverScreen("OK to RESTART");
 }
@@ -1546,7 +1569,6 @@ void tetrisReset() {
   tetrisDropInterval = TETRIS_INITIAL_DROP_MS;
   tetrisDropTime = millis();
   tetrisAwaitRestart = false;
-  tetrisBackReadyForExit = true;
   tetrisNextType = random(TETRIS_TYPES);
   tetrisSpawnPiece();
 }
@@ -1754,6 +1776,7 @@ void pongBounceFromPaddle(int paddleY, bool fromPlayer) {
 }
 
 void pongGameOver() {
+  resetGameReleaseInputs();
   renderGameOverScreen();
 }
 
@@ -1894,10 +1917,17 @@ void handleGamesSubmenu() {
   }
 
   if (gamesState == GAMES_SNAKE_STATE) {
-    if (snakeAwaitRestart && backClick) {
-      snakeResetInputStates();
-      gamesState = GAMES_MENU_STATE;
-      displayGamesMenu(display, gamesMenuIndex);
+    if (snakeAwaitRestart) {
+      if (gameBackReleaseClick()) {
+        snakeResetInputStates();
+        gamesState = GAMES_MENU_STATE;
+        displayGamesMenu(display, gamesMenuIndex);
+        return;
+      }
+      if (gameOkReleaseClick()) {
+        snakeReset();
+        snakeRenderFrame();
+      }
       return;
     }
 
@@ -1911,18 +1941,16 @@ void handleGamesSubmenu() {
   }
 
   if (gamesState == GAMES_BIRD_STATE) {
-    if (birdAwaitRestart && !birdBackReadyForExit) {
-      if (digitalRead(BUTTON_BACK) != LOW) {
-        buttonBack.resetStates();
-        birdBackReadyForExit = true;
+    if (birdAwaitRestart) {
+      if (gameBackReleaseClick()) {
+        gamesState = GAMES_MENU_STATE;
+        displayGamesMenu(display, gamesMenuIndex);
+        return;
       }
-      birdHandleTick(okClick);
-      return;
-    }
-
-    if (birdAwaitRestart && backClick) {
-      gamesState = GAMES_MENU_STATE;
-      displayGamesMenu(display, gamesMenuIndex);
+      if (gameOkReleaseClick()) {
+        birdReset();
+        birdRenderFrame();
+      }
       return;
     }
 
@@ -1932,23 +1960,18 @@ void handleGamesSubmenu() {
 
   if (gamesState == GAMES_TETRIS_STATE) {
     static bool exitHoldLatch = false;
-    if (tetrisAwaitRestart && backClick) {
-      tetrisSetDisplayRotation(false);
-      gamesState = GAMES_MENU_STATE;
-      displayGamesMenu(display, gamesMenuIndex);
+    if (tetrisAwaitRestart) {
+      if (gameBackReleaseClick()) {
+        tetrisSetDisplayRotation(false);
+        gamesState = GAMES_MENU_STATE;
+        displayGamesMenu(display, gamesMenuIndex);
+        return;
+      }
+      tetrisHandleTick(false, false, false, false, gameOkReleaseClick());
       return;
     }
 
-    if (tetrisAwaitRestart && !tetrisBackReadyForExit) {
-      if (digitalRead(BUTTON_BACK) != LOW) {
-        buttonBack.resetStates();
-        tetrisBackReadyForExit = true;
-      }
-    }
-
-    const bool exitHold = tetrisAwaitRestart
-      ? false
-      : (backHold && okHold);
+    const bool exitHold = backHold && okHold;
 
     if (exitHold && !exitHoldLatch) {
       exitHoldLatch = true;
@@ -1968,9 +1991,16 @@ void handleGamesSubmenu() {
   if (gamesState == GAMES_PONG_STATE) {
     static bool backHoldLatch = false;
 
-    if (pongAwaitRestart && backClick) {
-      gamesState = GAMES_MENU_STATE;
-      displayGamesMenu(display, gamesMenuIndex);
+    if (pongAwaitRestart) {
+      if (gameBackReleaseClick()) {
+        gamesState = GAMES_MENU_STATE;
+        displayGamesMenu(display, gamesMenuIndex);
+        return;
+      }
+      if (gameOkReleaseClick()) {
+        pongReset();
+        pongRenderFrame();
+      }
       return;
     }
 
