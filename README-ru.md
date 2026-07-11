@@ -58,7 +58,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 **iButton**
 - Read
 - Write
-- Config
+- Emulation
 
 **NRF24**
 - Jammer (ILLEGAL)
