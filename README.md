@@ -24,7 +24,7 @@ By using the firmware, you must comply with the laws of your region. The firmwar
 
 ### WiFi
 
-- Deauther *(nope, lol)*  
+- Deauth
 - Beacon Spam  
 - EvilPortal  
 - Wardriving
@@ -58,7 +58,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 **iButton**
 - Read
 - Write
-- Emulation
+- Emulate
 
 **NRF24**
 - Jammer (ILLEGAL)
@@ -79,6 +79,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Standby time
 - Restart
 - Reset
+- Update from SD
 - About
 
 ---
