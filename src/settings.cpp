@@ -1,7 +1,11 @@
 #include "display.h"
 #include <GyverButton.h>
 #include <esp_system.h>
+#include <SD.h>
+#include <Update.h>
 #include "CONFIG.h"
+#include "Explorer.h"
+#include "interface.h"
 #include "menu/settings.h"
 
 extern DisplayType display;
@@ -26,7 +30,7 @@ extern void resetToFactoryDefaults();
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 extern void resetActivityTimer();
 
-enum SettingsDetail : byte { SETTINGS_NONE, SETTINGS_COLOR, SETTINGS_STANDBY, SETTINGS_ABOUT };
+enum SettingsDetail : byte { SETTINGS_NONE, SETTINGS_COLOR, SETTINGS_STANDBY, SETTINGS_UPDATE, SETTINGS_ABOUT };
 
 static SettingsDetail currentDetail = SETTINGS_NONE;
 static byte standbySelectionIndex = 0;
@@ -34,6 +38,12 @@ static byte colorSelectionWorking = 0;
 static bool colorNeedRedraw = true;
 static bool standbyNeedRedraw = true;
 static bool aboutNeedRedraw = true;
+
+static const char* updateExts[] = {".bin"};
+static const int UPDATE_MAX_FILES = 50;
+static ExplorerEntry updateFileList[UPDATE_MAX_FILES];
+static ExplorerState updateExplorer;
+static ExplorerConfig updateExplorerCfg = {"/", updateExts, 1, false, false, true, false};
 
 void exitSettingsDetail() {
   currentDetail = SETTINGS_NONE;
@@ -70,6 +80,109 @@ void renderAboutSetting() {
 void renderStandbySetting(byte index, int previousIndex = -1) {
   standbyNeedRedraw = false;
   displayAnimatedMenu(display, standbyTimeoutLabels, STANDBY_OPTION_COUNT, index, previousIndex);
+}
+
+static void drawUpdateProgress(uint8_t progress) {
+  display.fillRect(14, 36, progress, 10, 1);
+  display.drawRect(14, 36, 100, 10, 1);
+  display.display();
+}
+
+static bool flashFirmwareFromSD(const String& fileName) {
+  static const size_t APP_OFFSET = 0x10000;
+  static const size_t BOOTLOADER_OFFSET = 0x1000;
+  static const size_t PARTITION_TABLE_OFFSET = 0x8000;
+
+  String path = String("/") + fileName;
+  File firmware = SD.open(path, FILE_READ);
+  if (!firmware || firmware.isDirectory() || firmware.size() <= APP_OFFSET) {
+    if (firmware) firmware.close();
+    return false;
+  }
+
+  // Accept only a merged flash image intended for offset 0x0.  Its bootloader,
+  // partition table, and application start at the standard ESP32 offsets.
+  uint8_t marker = 0;
+  if (!firmware.seek(BOOTLOADER_OFFSET) || firmware.read(&marker, 1) != 1 || marker != 0xE9 ||
+      !firmware.seek(PARTITION_TABLE_OFFSET) || firmware.read(&marker, 1) != 1 || marker != 0xAA ||
+      !firmware.seek(APP_OFFSET) || firmware.read(&marker, 1) != 1 || marker != 0xE9 ||
+      !firmware.seek(APP_OFFSET)) {
+    firmware.close();
+    return false;
+  }
+
+  display.clearDisplay();
+  display.setTextColor(1);
+  display.setTextSize(1);
+  display.setTextWrap(false);
+  display.setCursor(32, 18);
+  display.print("Flashing...");
+  display.drawRect(14, 36, 100, 10, 1);
+  display.display();
+
+  const size_t totalSize = firmware.size() - APP_OFFSET;
+  if (!Update.begin(totalSize, U_FLASH)) {
+    firmware.close();
+    return false;
+  }
+
+  uint8_t buffer[4096];
+  size_t writtenTotal = 0;
+  uint8_t shownProgress = 0;
+  while (firmware.available()) {
+    size_t bytesRead = firmware.read(buffer, sizeof(buffer));
+    if (bytesRead == 0 || Update.write(buffer, bytesRead) != bytesRead) {
+      Update.abort();
+      firmware.close();
+      return false;
+    }
+
+    writtenTotal += bytesRead;
+    uint8_t progress = (writtenTotal * 100UL) / totalSize;
+    if (progress != shownProgress) {
+      drawUpdateProgress(progress);
+      shownProgress = progress;
+    }
+    yield();
+  }
+  firmware.close();
+
+  if (!Update.end(true) || !Update.isFinished()) {
+    return false;
+  }
+
+  drawUpdateProgress(100);
+  delay(250);
+  ESP.restart();
+  return true;
+}
+
+static void handleUpdateDetail(bool upClick, bool downClick, bool okClick, bool backClick) {
+  ExplorerAction action = ExplorerHandle(
+    updateExplorer,
+    updateExplorerCfg,
+    display,
+    upClick,
+    downClick,
+    okClick,
+    backClick,
+    buttonBack.isHolded()
+  );
+
+  if (action == EXPLORER_SELECT_FILE) {
+    if (!flashFirmwareFromSD(updateExplorer.selectedFile)) {
+      display.clearDisplay();
+      display.setTextColor(1);
+      display.setTextSize(1);
+      display.setCursor(20, 28);
+      display.print(F("Update failed"));
+      display.display();
+      delay(1200);
+      ExplorerDraw(updateExplorer, display);
+    }
+  } else if (action == EXPLORER_EXIT) {
+    exitSettingsDetail();
+  }
 }
 
 void handleColorDetail(bool upClick, bool downClick, bool okClick, bool backClick) {
@@ -153,6 +266,15 @@ void enterSettingsDetail(byte menuIndex) {
     resetToFactoryDefaults();
     ESP.restart();
   } else if (menuIndex == 4) {
+    if (!ensureSDReadyInteractive(true)) {
+      displaySettingsMenu(display, settingsMenuIndex);
+      return;
+    }
+    currentDetail = SETTINGS_UPDATE;
+    ExplorerInit(updateExplorer, updateFileList, UPDATE_MAX_FILES, updateExplorerCfg);
+    ExplorerLoad(updateExplorer, updateExplorerCfg);
+    ExplorerDraw(updateExplorer, display);
+  } else if (menuIndex == 5) {
     currentDetail = SETTINGS_ABOUT;
     aboutNeedRedraw = true;
     renderAboutSetting();
@@ -179,6 +301,9 @@ void handleSettingsSubmenu() {
     return;
   } else if (currentDetail == SETTINGS_STANDBY) {
     handleStandbyDetail(upPress, downPress, okClick, backClick);
+    return;
+  } else if (currentDetail == SETTINGS_UPDATE) {
+    handleUpdateDetail(upClick, downClick, okClick, backClick);
     return;
   } else if (currentDetail == SETTINGS_ABOUT) {
     handleAboutDetail(okClick, backClick);

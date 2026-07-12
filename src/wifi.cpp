@@ -813,13 +813,11 @@ int getStoredWiFiNetworkCount() {
 }
 
 void drawWiFiNetworkListFrame(
-  int selectedIndex, int16_t arrowY = -1, int16_t selectedTextShift = 2,
-  int previousIndex = -1, int16_t previousTextShift = 0
+  int selectedIndex, int16_t arrowY = -1
 ) {
   int networkCount = getStoredWiFiNetworkCount();
   if (networkCount <= 0) return;
   selectedIndex = min(max(selectedIndex, 0), networkCount - 1);
-  if (previousIndex >= 0) previousIndex = min(max(previousIndex, 0), networkCount - 1);
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -838,13 +836,7 @@ void drawWiFiNetworkListFrame(
 
   for (int i = startIndex; i < min(networkCount, startIndex + 5); i++) {
     int16_t rowY = startY + (i - startIndex) * rowHeight;
-    if (i == selectedIndex) {
-      display.setCursor(textX + selectedTextShift, rowY);
-    } else if (i == previousIndex) {
-      display.setCursor(textX + previousTextShift, rowY);
-    } else {
-      display.setCursor(textX, rowY);
-    }
+    display.setCursor(textX, rowY);
     display.println(ssidList[i].substring(0, 15));
   }
   display.setCursor(arrowX, arrowY);
@@ -869,18 +861,17 @@ void drawWiFiNetworkList(int selectedIndex, int previousIndex = -1) {
   int16_t fromY = startY + (previousIndex - startIndex) * rowHeight;
   int16_t toY = startY + (selectedIndex - startIndex) * rowHeight;
 
-  const byte steps = 2;
+  const byte steps = 4;
   for (byte step = 1; step <= steps; step++) {
     int progress = (step * 100) / steps;
     int eased = progress < 50
       ? (2 * progress * progress) / 100
       : 100 - (2 * (100 - progress) * (100 - progress)) / 100;
     int16_t arrowY = fromY + ((toY - fromY) * eased) / 100;
-    int16_t textShift = (2 * eased) / 100;
-    drawWiFiNetworkListFrame(selectedIndex, arrowY, textShift, previousIndex, 2 - textShift);
-    delay(3);
+    drawWiFiNetworkListFrame(selectedIndex, arrowY);
+    delay(1);
   }
-  drawWiFiNetworkListFrame(selectedIndex, toY, 2);
+  drawWiFiNetworkListFrame(selectedIndex, toY);
 }
 
 void handleDeauthSubmenu() {

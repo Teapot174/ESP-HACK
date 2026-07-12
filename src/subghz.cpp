@@ -93,6 +93,12 @@ struct BruceConfigPins {
   } CC1101_bus;
 } bruceConfigPins;
 
+extern byte getSubGHzCC1101GDO0Pin();
+extern byte getSubGHzCC1101CSPin();
+
+static byte cc1101GDO0Pin = CC1101_GDO0;
+static byte cc1101CSPin = CC1101_CS;
+
 const float analyzerFreqs[] = {
   300.0, 302.75, 303.0, 303.87, 303.90, 304.25,
   307.0, 307.50, 307.80, 309.0, 310.0,
@@ -241,7 +247,7 @@ bool initRfModule(String mode, float freq);
 void deinitRfModule();
 void resetButtonStates();
 void OLED_printBruteIntro();
-void OLED_printBruteConfig();
+void OLED_printBruteConfig(int previousSelection = -1);
 void OLED_printBruteProgress(uint16_t progress, uint16_t total);
 bool bruteInitTx();
 void bruteStopTx();
@@ -252,13 +258,45 @@ static bool cc1101IsConnected() {
   return version != 0x00 && version != 0xFF;
 }
 
-bool initRfModule(String mode, float freq) {
-  ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_CS);
-  ELECHOUSE_cc1101.setGDO0(CC1101_GDO0);
+static bool cc1101PinsReady = false;
+static bool cc1101Initialized = false;
+
+static void syncCC1101PinsFromGPIOConfig() {
+  byte newGDO0Pin = getSubGHzCC1101GDO0Pin();
+  byte newCSPin = getSubGHzCC1101CSPin();
+  if (cc1101GDO0Pin == newGDO0Pin && cc1101CSPin == newCSPin) return;
+
+  cc1101GDO0Pin = newGDO0Pin;
+  cc1101CSPin = newCSPin;
+  bruceConfig.rfTx = cc1101GDO0Pin;
+  bruceConfigPins.CC1101_bus.io0 = cc1101GDO0Pin;
+  cc1101PinsReady = false;
+  cc1101Initialized = false;
+}
+
+static void prepareCC1101Pins() {
+  syncCC1101PinsFromGPIOConfig();
+  if (cc1101PinsReady) return;
+  pinMode(cc1101CSPin, OUTPUT);
+  digitalWrite(cc1101CSPin, HIGH);
+  ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, cc1101CSPin);
+  ELECHOUSE_cc1101.setGDO0(cc1101GDO0Pin);
+  cc1101PinsReady = true;
+}
+
+static bool ensureCC1101Initialized() {
+  prepareCC1101Pins();
+  if (cc1101Initialized && cc1101IsConnected()) return true;
+
   ELECHOUSE_cc1101.SpiStrobe(0x30);
-  delayMicroseconds(1000);
+  delayMicroseconds(100);
   ELECHOUSE_cc1101.Init();
-  if (!cc1101IsConnected()) {
+  cc1101Initialized = cc1101IsConnected();
+  return cc1101Initialized;
+}
+
+bool initRfModule(String mode, float freq) {
+  if (!ensureCC1101Initialized()) {
     return false;
   }
   ELECHOUSE_cc1101.setMHZ(freq);
@@ -268,22 +306,22 @@ bool initRfModule(String mode, float freq) {
     ELECHOUSE_cc1101.setCrc(0);
     ELECHOUSE_cc1101.setPktFormat(3);
     ELECHOUSE_cc1101.SetTx();
-    pinMode(CC1101_GDO0, OUTPUT);
-    digitalWrite(CC1101_GDO0, LOW);
+    pinMode(cc1101GDO0Pin, OUTPUT);
+    digitalWrite(cc1101GDO0Pin, LOW);
   } else {
     ELECHOUSE_cc1101.setPktFormat(0);
     ELECHOUSE_cc1101.SetRx();
   }
   ELECHOUSE_cc1101.SpiStrobe(0x33);
-  delayMicroseconds(2000);
+  delayMicroseconds(100);
   return true;
 }
 
 void deinitRfModule() {
   ELECHOUSE_cc1101.SpiStrobe(0x36);
   ELECHOUSE_cc1101.SetRx();
-  pinMode(CC1101_GDO0, OUTPUT);
-  digitalWrite(CC1101_GDO0, LOW);
+  pinMode(cc1101GDO0Pin, OUTPUT);
+  digitalWrite(cc1101GDO0Pin, LOW);
 }
 
 void runSubGHz() {
@@ -294,7 +332,7 @@ void runSubGHz() {
     resetButtonStates();
     return;
   }
-  rcswitch.enableReceive(CC1101_GDO0);
+  rcswitch.enableReceive(cc1101GDO0Pin);
   emMenuState menuState = menuMain;
   menuIndex = 0;
   OLED_printSubGHzMenu(display, menuIndex);
@@ -328,7 +366,7 @@ void runSubGHz() {
           menuState = menuReceive;
           setupCC1101();
           rcswitch.disableReceive();
-          rcswitch.enableReceive(CC1101_GDO0);
+          rcswitch.enableReceive(cc1101GDO0Pin);
           validKeyReceived = false;
           signals = 0;
           memset(&keyData1, 0, sizeof(tpKeyData));
@@ -384,7 +422,7 @@ void runSubGHz() {
           rawRecorderSessionFile = "";
           rawRecorderStoppedFile = "";
           rawRecorderEdgeCount = 0;
-          rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+          rawRecorderPrevLevel = digitalRead(cc1101GDO0Pin);
           rawRecorderPrevEdgeUs = micros();
           rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
           rawRecorderLastDraw = 0;
@@ -520,7 +558,7 @@ void runSubGHz() {
       if (!rawRecorderRunning && downClick) {
         stepFrequency(1);
         setupCC1101();
-        rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+        rawRecorderPrevLevel = digitalRead(cc1101GDO0Pin);
         rawRecorderPrevEdgeUs = micros();
         rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
         rawRecorderEdgeCount = 0;
@@ -650,12 +688,14 @@ void runSubGHz() {
       }
     } else if (menuState == menuBruteConfig) {
       if (buttonUp.isClick()) {
+        int previousSelection = bruteConfigSelection;
         bruteConfigSelection = (bruteConfigSelection == 0) ? 1 : bruteConfigSelection - 1;
-        OLED_printBruteConfig();
+        OLED_printBruteConfig(previousSelection);
       }
       if (buttonDown.isClick()) {
+        int previousSelection = bruteConfigSelection;
         bruteConfigSelection = (bruteConfigSelection + 1) % 2;
-        OLED_printBruteConfig();
+        OLED_printBruteConfig(previousSelection);
       }
       if (buttonOK.isClick()) {
         if (bruteConfigSelection == 0) {
@@ -676,9 +716,9 @@ void runSubGHz() {
       if (buttonBack.isClick()) {
         bruteRunning = false;
         bruteStopTx();
-        menuState = menuBruteforce;
+        menuState = menuMain;
         resetButtonStates();
-        OLED_printBruteIntro();
+        OLED_printSubGHzMenu(display, menuIndex);
       }
       if (buttonOK.isClick()) {
         bruteRunning = false;
@@ -792,18 +832,11 @@ void resetButtonStates() {
 }
 
 bool setupCC1101() {
-  pinMode(CC1101_CS, OUTPUT);
-  digitalWrite(CC1101_CS, HIGH);
-  ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, CC1101_CS);
-  ELECHOUSE_cc1101.setGDO0(CC1101_GDO0);
-  ELECHOUSE_cc1101.SpiStrobe(0x30);
-  delayMicroseconds(1000);
-  ELECHOUSE_cc1101.Init();
-  if (!cc1101IsConnected()) {
+  if (!ensureCC1101Initialized()) {
     return false;
   }
   ELECHOUSE_cc1101.SpiStrobe(0x36);
-  delayMicroseconds(2000);
+  delayMicroseconds(100);
   configureCC1101();
   return true;
 }
@@ -815,17 +848,15 @@ void configureCC1101() {
   ELECHOUSE_cc1101.setDeviation(0);
   ELECHOUSE_cc1101.setPA(12);
   ELECHOUSE_cc1101.SpiStrobe(0x36);
-  delayMicroseconds(2000);
+  delayMicroseconds(100);
   ELECHOUSE_cc1101.SetRx();
 }
 
 void restoreReceiveMode() {
-  ELECHOUSE_cc1101.SpiStrobe(0x30);
-  delayMicroseconds(1000);
-  ELECHOUSE_cc1101.Init();
+  if (!ensureCC1101Initialized()) return;
   configureCC1101();
   rcswitch.disableReceive();
-  rcswitch.enableReceive(CC1101_GDO0);
+  rcswitch.enableReceive(cc1101GDO0Pin);
 }
 
 void read_rcswitch(tpKeyData* kd) {
@@ -1232,8 +1263,8 @@ bool startRawRecorderSession() {
   int lastSlash = fileName.lastIndexOf('/');
   rawRecorderLastFile = (lastSlash >= 0) ? fileName.substring(lastSlash + 1) : fileName;
   rawRecorderEdgeCount = 0;
-  pinMode(CC1101_GDO0, INPUT);
-  rawRecorderPrevLevel = digitalRead(CC1101_GDO0);
+  pinMode(cc1101GDO0Pin, INPUT);
+  rawRecorderPrevLevel = digitalRead(cc1101GDO0Pin);
   rawRecorderPrevEdgeUs = micros();
   rawRecorderLastEdgeUs = rawRecorderPrevEdgeUs;
   Serial.print(F("RAW session started: "));
@@ -1294,7 +1325,7 @@ void stopRawRecorderSession(bool flushPending, bool discardFile) {
 
 void handleRawRecorderCapture() {
   unsigned long nowUs = micros();
-  int level = digitalRead(CC1101_GDO0);
+  int level = digitalRead(cc1101GDO0Pin);
 
   if (level != rawRecorderPrevLevel) {
     unsigned long durUs = nowUs - rawRecorderPrevEdgeUs;
@@ -1439,7 +1470,13 @@ void OLED_printBruteIntro() {
   display.display();
 }
 
-void OLED_printBruteConfig() {
+static int16_t getBruteConfigArrowY(uint8_t selection) {
+  return selection == 0 ? 24 : 36;
+}
+
+static void drawBruteConfigFrame(int16_t arrowY = -1) {
+  if (arrowY < 0) arrowY = getBruteConfigArrowY(bruteConfigSelection);
+
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(1);
@@ -1450,19 +1487,40 @@ void OLED_printBruteConfig() {
   display.setCursor(1, 10);
   display.print(F("====================="));
 
-  display.setCursor(1, 24);
-  display.print(bruteConfigSelection == 0 ? ">" : " ");
+  display.setCursor(7, 24);
   display.print(F("Type: "));
   String typeLabel = String(bruteTypes[bruteTypeIndex]) + "-" + String(bruteBits);
   if (bruteTypeIndex != 4) typeLabel += F("bit");
   display.print(typeLabel);
 
-  display.setCursor(1, 36);
-  display.print(bruteConfigSelection == 1 ? ">" : " ");
+  display.setCursor(7, 36);
   display.print(F("Freq: "));
   display.print(bruteFreqLabels[bruteFreqIndex]);
 
+  display.setCursor(1, arrowY);
+  display.print(F(">"));
   display.display();
+}
+
+void OLED_printBruteConfig(int previousSelection) {
+  if (previousSelection < 0 || previousSelection == bruteConfigSelection) {
+    drawBruteConfigFrame();
+    return;
+  }
+
+  int16_t fromY = getBruteConfigArrowY(previousSelection);
+  int16_t toY = getBruteConfigArrowY(bruteConfigSelection);
+  const byte steps = 4;
+  for (byte step = 1; step <= steps; step++) {
+    int progress = (step * 100) / steps;
+    int eased = progress < 50
+      ? (2 * progress * progress) / 100
+      : 100 - (2 * (100 - progress) * (100 - progress)) / 100;
+    int16_t arrowY = fromY + ((toY - fromY) * eased) / 100;
+    drawBruteConfigFrame(arrowY);
+    delay(1);
+  }
+  drawBruteConfigFrame(toY);
 }
 
 void OLED_printBruteProgress(uint16_t progress, uint16_t total) {
@@ -2408,7 +2466,7 @@ void OLED_printJammer() {
 
 void startJamming() {
   Serial.println(F("Starting jammer"));
-  ELECHOUSE_cc1101.Init();
+  if (!ensureCC1101Initialized()) return;
   ELECHOUSE_cc1101.setModulation(0);
   ELECHOUSE_cc1101.setMHZ(frequency);
   ELECHOUSE_cc1101.setPA(12);

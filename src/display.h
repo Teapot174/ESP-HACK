@@ -87,11 +87,11 @@ inline bool isMenuButtonPress(uint8_t pin, MenuButtonState &state) {
 }
 
 inline void drawMenuArrows(DisplayType &display) {
-  display.setTextSize(1);
-  display.setCursor(2, 30);
-  display.print(">");
-  display.setCursor(120, 30);
-  display.print("<");
+  static const unsigned char PROGMEM image_ButtonRight_bits[] = {0x80, 0xc0, 0xe0, 0xf0, 0xe0, 0xc0, 0x80};
+  static const unsigned char PROGMEM image_ButtonLeft_bits[] = {0x10, 0x30, 0x70, 0xf0, 0x70, 0x30, 0x10};
+
+  display.drawBitmap(0, 29, image_ButtonRight_bits, 4, 7, 1);
+  display.drawBitmap(124, 29, image_ButtonLeft_bits, 4, 7, 1);
 }
 
 inline void renderThreeItemMenu(DisplayType &display, const char *prevText, const char *currentText, const char *nextText) {
@@ -116,8 +116,8 @@ inline void animateThreeItemMenuTransition(DisplayType &display, const char *fro
                                            const char *toNext, bool movingDown) {
   (void)toCurrent;
 
-  const uint8_t steps = 8;
-  const uint8_t frameDelayMs = 6;
+  const uint8_t steps = 9;
+  const uint8_t frameDelayMs = 2;
 
   const int16_t topY = 7;
   const int16_t centerY = 25;

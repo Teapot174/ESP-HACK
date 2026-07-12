@@ -95,6 +95,9 @@ static const unsigned char PROGMEM image_DOTsel_bits[] = {0x60,0xf0,0xf0,0x60};
 
 static const unsigned char PROGMEM image_DOT_bits[] = {0x60,0x90,0x90,0x60};
 
+static const unsigned char PROGMEM image_ButtonLeft_bits[] = {0x10,0x30,0x70,0xf0,0x70,0x30,0x10};
+
+static const unsigned char PROGMEM image_ButtonRight_bits[] = {0x80,0xc0,0xe0,0xf0,0xe0,0xc0,0x80};
 
 
 // LOGO
@@ -182,6 +185,8 @@ extern const unsigned char PROGMEM image_Games_bits[];
 extern const unsigned char PROGMEM image_Config_bits[];
 extern const unsigned char PROGMEM image_DOTsel_bits[];
 extern const unsigned char PROGMEM image_DOT_bits[];
+extern const unsigned char PROGMEM image_ButtonRight_bits[];
+extern const unsigned char PROGMEM image_ButtonLeft_bits[];
 bool ensureSDReadyInteractive(bool allowSkip = true);
 
 
@@ -280,8 +285,8 @@ inline void OLED_printMenuAnimated(DisplayType &display, byte menuIndex, int pre
     return;
   }
 
-  const uint8_t steps = 8;
-  const uint8_t frameDelayMs = 6;
+  const uint8_t steps = 10;
+  const uint8_t frameDelayMs = 2;
   const bool movingDown = menuIndex == ((previousIndex + 1) % MENU_ITEM_COUNT);
 
   for (uint8_t step = 1; step <= steps; ++step) {

@@ -568,9 +568,21 @@ static void displayMousePairScreen(bool connected, bool ready, const char* error
   display.display();
 }
 
-static void displayMouseConfigScreen(uint8_t selection, uint8_t powerIndex, uint8_t speedIndex,
-                                     uint8_t modeIndex, bool running, const char* errorText = nullptr) {
+static int16_t getMouseConfigArrowY(uint8_t selection) {
+  switch (selection) {
+    case 0: return 22;
+    case 1: return 30;
+    case 2: return 38;
+    default: return 50;
+  }
+}
+
+static void drawMouseConfigFrame(uint8_t selection, uint8_t powerIndex, uint8_t speedIndex,
+                                 uint8_t modeIndex, bool running, const char* errorText,
+                                 int16_t arrowY = -1) {
   const int valueX = 54;
+  const int labelX = 16;
+  if (arrowY < 0) arrowY = getMouseConfigArrowY(selection);
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -586,29 +598,50 @@ static void displayMouseConfigScreen(uint8_t selection, uint8_t powerIndex, uint
     display.print(errorText);
   }
 
-  display.setCursor(6, 22);
-  display.print(selection == 0 ? ">" : " ");
+  display.setCursor(labelX, 22);
   display.print(F("Power:"));
   display.setCursor(valueX, 22);
   display.print(mousePowerValues[powerIndex]);
   display.println(F("%"));
 
-  display.setCursor(6, 30);
-  display.print(selection == 1 ? ">" : " ");
+  display.setCursor(labelX, 30);
   display.print(F("Speed:"));
   display.setCursor(valueX, 30);
   display.print(mouseSpeedValues[speedIndex]);
   display.println(F("%"));
 
-  display.setCursor(6, 38);
-  display.print(selection == 2 ? ">" : " ");
+  display.setCursor(labelX, 38);
   display.print(F("Mode: "));
   display.println(mouseModeLabels[modeIndex]);
 
-  display.setCursor(8, 50);
-  display.print(selection == 3 ? ">" : " ");
+  display.setCursor(labelX, 50);
   display.println(running ? F("Stop") : F("Start"));
+  display.setCursor(6, arrowY);
+  display.print(F(">"));
   display.display();
+}
+
+static void displayMouseConfigScreen(uint8_t selection, uint8_t powerIndex, uint8_t speedIndex,
+                                     uint8_t modeIndex, bool running, const char* errorText = nullptr,
+                                     int previousSelection = -1) {
+  if (previousSelection < 0 || previousSelection == selection) {
+    drawMouseConfigFrame(selection, powerIndex, speedIndex, modeIndex, running, errorText);
+    return;
+  }
+
+  int16_t fromY = getMouseConfigArrowY(previousSelection);
+  int16_t toY = getMouseConfigArrowY(selection);
+  const byte steps = 4;
+  for (byte step = 1; step <= steps; step++) {
+    int progress = (step * 100) / steps;
+    int eased = progress < 50
+      ? (2 * progress * progress) / 100
+      : 100 - (2 * (100 - progress) * (100 - progress)) / 100;
+    int16_t arrowY = fromY + ((toY - fromY) * eased) / 100;
+    drawMouseConfigFrame(selection, powerIndex, speedIndex, modeIndex, running, errorText, arrowY);
+    delay(1);
+  }
+  drawMouseConfigFrame(selection, powerIndex, speedIndex, modeIndex, running, errorText, toY);
 }
 
 static void resetMouseMotionState(float& phase, float& prevX, float& prevY, unsigned long& lastStepAt) {
@@ -868,14 +901,16 @@ void handleBluetoothSubmenu() {
     }
 
     if (isMenuButtonPress(BUTTON_UP, mouseUpHeld)) {
+      uint8_t previousSelection = mouseSelection;
       mouseSelection = (mouseSelection == 0) ? 3 : mouseSelection - 1;
       displayMouseConfigScreen(mouseSelection, mousePowerIndex, mouseSpeedIndex, mouseModeIndex,
-                               mouseRunning, mouseErrorText);
+                               mouseRunning, mouseErrorText, previousSelection);
     }
     if (isMenuButtonPress(BUTTON_DOWN, mouseDownHeld)) {
+      uint8_t previousSelection = mouseSelection;
       mouseSelection = (mouseSelection + 1) % 4;
       displayMouseConfigScreen(mouseSelection, mousePowerIndex, mouseSpeedIndex, mouseModeIndex,
-                               mouseRunning, mouseErrorText);
+                               mouseRunning, mouseErrorText, previousSelection);
     }
 
     if (buttonOK.isClick()) {

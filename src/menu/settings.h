@@ -4,8 +4,8 @@
 #include "display.h"
 #include "CONFIG.h"
 
-#define SETTINGS_MENU_ITEM_COUNT 5
-static const char* settingsMenuItems[] = {"Color", "Standby", "Restart", "Reset", "About"};
+#define SETTINGS_MENU_ITEM_COUNT 6
+static const char* settingsMenuItems[] = {"Color", "Standby", "Restart", "Reset", "Update", "About"};
 
 static const unsigned char PROGMEM image_Teapot_bits[] = {
   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
