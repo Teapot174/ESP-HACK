@@ -31,7 +31,7 @@ void init_deauth_wifi() {
     esp_wifi_set_promiscuous_filter(NULL);
     esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
     esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_11M_L);
-    esp_wifi_set_max_tx_power(84); // Max power (21 dBm)
+    esp_wifi_set_max_tx_power(84); // 21 dBm
     Serial.println("WiFi initialized for deauth");
 }
 
