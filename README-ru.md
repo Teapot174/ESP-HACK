@@ -24,7 +24,7 @@ ESP-HACK — мощная универсальная прошивка для ESP
 
 ### WiFi
 
-- Deauther *(анворк, лол)*  
+- Deauth
 - Beacon Spam  
 - EvilPortal  
 - Wardriving
@@ -58,7 +58,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 **iButton**
 - Read
 - Write
-- Emulation
+- Emulate
 
 **NRF24**
 - Jammer (ILLEGAL)
@@ -79,6 +79,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Режим ожидания
 - Перезагрузка
 - Сброс
+- Обновить с SD
 - О прошивке
 
 ---
