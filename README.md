@@ -71,7 +71,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Snake
 - Flappy Bird
 - Ping Pong
-- Tetris
+- Bricks
 - Doom
 
 ### Settings
