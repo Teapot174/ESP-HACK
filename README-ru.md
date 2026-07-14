@@ -69,11 +69,10 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 ### Games
 - Snake
-- Flappy Bird
+- Bird
 - Ping Pong
-- Tetris
-- Doom
-
+- Bricks
+- Shooter
 ### Settings
 - Цвет дисплея
 - Режим ожидания
