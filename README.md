@@ -69,10 +69,10 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 ### Games
 - Snake
-- Flappy Bird
+- Bird
 - Ping Pong
 - Bricks
-- Doom
+- Shooter
 
 ### Settings
 - Display Color
