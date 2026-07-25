@@ -15,7 +15,7 @@
 extern DisplayType display;
 extern GButton buttonUp, buttonDown, buttonOK, buttonBack;
 extern bool inMenu;
-extern byte currentMenu, wifiMenuIndex;
+extern byte wifiMenuIndex;
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 void createDefaultPortal();
 void saveCapturedDataToCSV(String csvLine);
@@ -356,7 +356,7 @@ void displayEvilPortalScreen() {
   display.setTextColor(SH110X_WHITE);
   display.setCursor(3, 3);
   display.println(F("Evil-Portal"));
-  display.setCursor(1, 10);
+  display.setCursor(1, 11);
   display.println(F("IP: 192.168.4.1"));
   displaySeparatorLine();
   
@@ -1216,8 +1216,12 @@ void handleWiFiSubmenu() {
       } else if (action == EXPLORER_EXIT) {
         inEvilPortal = false;
         inPortalExplorer = false;
-        currentMenu = 0;
-        returnToMainMenu();
+        wifiMenuIndex = 2;
+        buttonUp.resetStates();
+        buttonDown.resetStates();
+        buttonOK.resetStates();
+        buttonBack.resetStates();
+        displayWiFiMenu(display, wifiMenuIndex);
       }
       return;
     } else {
