@@ -236,6 +236,7 @@ uint32_t analyzerSmoothAvg(uint32_t newVal);
 uint32_t analyzerNearestFreq(uint32_t input);
 void analyzerAddHistory(uint32_t freq);
 void analyzerSaveFreq();
+bool analyzerHandleInput();
 void analyzerDoScan();
 void analyzerDrawGraph(uint8_t x, uint8_t y);
 void OLED_printAnalyzer();
@@ -260,6 +261,9 @@ static bool cc1101IsConnected() {
 
 static bool cc1101PinsReady = false;
 static bool cc1101Initialized = false;
+
+// Tracks whether RCSwitch currently has an interrupt registered.
+static bool rcSwitchReceiveEnabled = false;
 
 static void syncCC1101PinsFromGPIOConfig() {
   byte newGDO0Pin = getSubGHzCC1101GDO0Pin();
@@ -324,6 +328,31 @@ void deinitRfModule() {
   digitalWrite(cc1101GDO0Pin, LOW);
 }
 
+static void enableRcSwitchReceive() {
+  if (rcSwitchReceiveEnabled) {
+    return;
+  }
+
+  rcswitch.enableReceive(cc1101GDO0Pin);
+  rcSwitchReceiveEnabled = true;
+
+  Serial.printf(
+    "[RCSwitch] RX enabled on GPIO %u\n",
+    cc1101GDO0Pin
+  );
+}
+
+static void disableRcSwitchReceive() {
+  if (!rcSwitchReceiveEnabled) {
+    return;
+  }
+
+  rcswitch.disableReceive();
+  rcSwitchReceiveEnabled = false;
+
+  Serial.println(F("[RCSwitch] RX disabled"));
+}
+
 void runSubGHz() {
   if (!setupCC1101()) {
     Serial.println(F("Failed to initialize CC1101"));
@@ -332,7 +361,7 @@ void runSubGHz() {
     resetButtonStates();
     return;
   }
-  rcswitch.enableReceive(cc1101GDO0Pin);
+  enableRcSwitchReceive();
   emMenuState menuState = menuMain;
   menuIndex = 0;
   OLED_printSubGHzMenu(display, menuIndex);
@@ -365,8 +394,8 @@ void runSubGHz() {
           }
           menuState = menuReceive;
           setupCC1101();
-          rcswitch.disableReceive();
-          rcswitch.enableReceive(cc1101GDO0Pin);
+          disableRcSwitchReceive();
+          enableRcSwitchReceive();
           validKeyReceived = false;
           signals = 0;
           memset(&keyData1, 0, sizeof(tpKeyData));
@@ -390,7 +419,7 @@ void runSubGHz() {
         } else if (menuIndex == 2) {
           menuState = menuAnalyzer;
           setupCC1101();
-          rcswitch.disableReceive();
+          disableRcSwitchReceive();
           analyzerInit();
           analyzerExitRequested = false;
           resetButtonStates();
@@ -745,26 +774,26 @@ void runSubGHz() {
         }
       }
     } else if (menuState == menuAnalyzer) {
-      if (buttonBack.isClick() || analyzerExitRequested) {
+      if (analyzerExitRequested) {
         analyzerExitRequested = false;
         menuState = menuMain;
-        rcswitch.disableReceive();
+
+        disableRcSwitchReceive();
         restoreReceiveMode();
+
         resetButtonStates();
         OLED_printSubGHzMenu(display, menuIndex);
       } else {
-        if (buttonDown.isClick()) {
-          analyzerTrigLevel -= ANALYZER_TRIG_STEP;
-          if (analyzerTrigLevel < ANALYZER_RSSI_LOW) analyzerTrigLevel = ANALYZER_RSSI_LOW;
+        if (!analyzerHandleInput()) {
+          continue;
         }
-        if (buttonUp.isClick()) {
-          analyzerTrigLevel += ANALYZER_TRIG_STEP;
-          if (analyzerTrigLevel > ANALYZER_RSSI_HIGH) analyzerTrigLevel = ANALYZER_RSSI_HIGH;
-        }
-        if (buttonOK.isClick()) {
-          analyzerSaveFreq();
-        }
+
         analyzerDoScan();
+
+        if (analyzerExitRequested) {
+          continue;
+        }
+
         if (millis() - analyzerLastDraw >= 50) {
           OLED_printAnalyzer();
           analyzerLastDraw = millis();
@@ -853,10 +882,14 @@ void configureCC1101() {
 }
 
 void restoreReceiveMode() {
-  if (!ensureCC1101Initialized()) return;
+  if (!ensureCC1101Initialized()) {
+    return;
+  }
+
   configureCC1101();
-  rcswitch.disableReceive();
-  rcswitch.enableReceive(cc1101GDO0Pin);
+
+  disableRcSwitchReceive();
+  enableRcSwitchReceive();
 }
 
 void read_rcswitch(tpKeyData* kd) {
@@ -2241,6 +2274,78 @@ void analyzerSaveFreq() {
   }
 }
 
+bool analyzerHandleInput() {
+  buttonUp.tick();
+  buttonDown.tick();
+  buttonOK.tick();
+  buttonBack.tick();
+
+  if (buttonBack.isClick()) {
+    analyzerExitRequested = true;
+    return false;
+  }
+
+  bool displayChanged = false;
+
+  if (buttonDown.isClick()) {
+    const float previousLevel = analyzerTrigLevel;
+
+    analyzerTrigLevel -= ANALYZER_TRIG_STEP;
+
+    if (analyzerTrigLevel < ANALYZER_RSSI_LOW) {
+      analyzerTrigLevel = ANALYZER_RSSI_LOW;
+    }
+
+    displayChanged = analyzerTrigLevel != previousLevel;
+
+    Serial.printf(
+      "[Analyzer] Trigger: %.0f dBm\n",
+      analyzerTrigLevel
+    );
+  }
+
+  if (buttonUp.isClick()) {
+    const float previousLevel = analyzerTrigLevel;
+
+    if (analyzerTrigLevel == ANALYZER_RSSI_LOW) {
+      analyzerTrigLevel = -95.0f;
+    } else {
+      analyzerTrigLevel += ANALYZER_TRIG_STEP;
+    }
+
+    if (analyzerTrigLevel > ANALYZER_RSSI_HIGH) {
+      analyzerTrigLevel = ANALYZER_RSSI_HIGH;
+    }
+
+    displayChanged = analyzerTrigLevel != previousLevel;
+
+    Serial.printf(
+      "[Analyzer] Trigger: %.0f dBm\n",
+      analyzerTrigLevel
+    );
+  }
+
+  if (buttonOK.isClick()) {
+    analyzerSaveFreq();
+    displayChanged = true;
+
+    Serial.printf(
+      "[Analyzer] Saved frequency: %lu Hz\n",
+      analyzerState.saved_freq
+    );
+  }
+
+  // Move the marker to the new trigger value immediately.
+  analyzerState.threshold = analyzerTrigLevel;
+
+  if (displayChanged) {
+    OLED_printAnalyzer();
+    analyzerLastDraw = millis();
+  }
+
+  return true;
+}
+
 void analyzerDoScan() {
   bool hadSignal = analyzerState.has_signal;
   uint32_t prevFreq = analyzerState.curr_freq;
@@ -2251,9 +2356,7 @@ void analyzerDoScan() {
   ELECHOUSE_cc1101.setRxBW(812.0);
 
   for (int i = 0; i < ANALYZER_FREQ_COUNT; i++) {
-    buttonBack.tick();
-    if (buttonBack.isClick()) {
-      analyzerExitRequested = true;
+    if (!analyzerHandleInput()) {
       return;
     }
 
@@ -2282,9 +2385,8 @@ void analyzerDoScan() {
     for (uint32_t freqHz = analyzerScanResult.rough_freq - 300000;
          freqHz < analyzerScanResult.rough_freq + 300000;
          freqHz += 20000) {
-      buttonBack.tick();
-      if (buttonBack.isClick()) {
-        analyzerExitRequested = true;
+
+      if (!analyzerHandleInput()) {
         return;
       }
       if (analyzerIsNoiseFreq(freqHz)) {
@@ -2404,9 +2506,11 @@ void OLED_printAnalyzer() {
     }
   }
 
-  display.setCursor(2, 55);
-  display.print("RSSI");
-  analyzerDrawGraph(26, 57);
+  display.setCursor(1, 55);
+  display.print("T");
+  display.print((int)analyzerTrigLevel);
+
+  analyzerDrawGraph(29, 57);
   display.display();
 }
 
