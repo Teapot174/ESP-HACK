@@ -9,6 +9,7 @@
 #include <NimBLEServer.h>
 #include <NimBLEAdvertising.h>
 #include <array>
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include "menu/bluetooth.h"
 #include "ble_spam.h"
@@ -96,7 +97,7 @@ NimBLECharacteristic* gKeyboardInput = nullptr;
 NimBLECharacteristic* gMouseInput    = nullptr;
 NimBLEAdvertising*    gAdv         = nullptr;
 BLEHidMode            gBleMode     = BLE_HID_NONE;
-bool                  gBleStopping = false;
+std::atomic_bool       gBleSessionActive{false};
 BleSubscriberHandles  gKeyboardSubscribers = emptyBleSubscriberHandles();
 BleSubscriberHandles  gMouseSubscribers = emptyBleSubscriberHandles();
 portMUX_TYPE           gBleSubscriptionMux = portMUX_INITIALIZER_UNLOCKED;
@@ -191,15 +192,20 @@ static bool hasBleConnections() {
 }
 
 static void startBleAdvertisingIfCapacity() {
-  if (!gServer ||
+  if (!gBleSessionActive.load() ||
+      !gServer ||
       !gAdv ||
-      gBleStopping ||
       gAdv->isAdvertising() ||
       gServer->getConnectedCount() >= CONFIG_BT_NIMBLE_MAX_CONNECTIONS) {
     return;
   }
 
   if (gAdv->start()) {
+    if (!gBleSessionActive.load()) {
+      gAdv->stop();
+      return;
+    }
+
     Serial.printf(
         "[BLE Pair] Advertising started (%u/%u peers)\n",
         gServer->getConnectedCount(),
@@ -454,25 +460,23 @@ static void resetBleRuntimeState() {
   gMouseInput = nullptr;
   gAdv = nullptr;
   gBleMode = BLE_HID_NONE;
-  gBleStopping = false;
+  gBleSessionActive.store(false);
   resetBleSubscriptions();
 }
 
 static void disconnectAllBlePeers() {
   if (!gServer) return;
 
-  const int peerCount = gServer->getConnectedCount();
-  for (int peerIndex = peerCount - 1; peerIndex >= 0; --peerIndex) {
-    NimBLEConnInfo peerInfo = gServer->getPeerInfo((uint8_t)peerIndex);
-    gServer->disconnect(peerInfo.getConnHandle());
+  const std::vector<uint16_t> peerHandles = gServer->getPeerDevices();
+  for (uint16_t handle : peerHandles) {
+    gServer->disconnect(handle);
     delay(35);
   }
 }
 
 static void pauseBLE() {
+  gBleSessionActive.store(false);
   if (!gBleInited) return;
-
-  gBleStopping = true;
 
   if (gAdv && gAdv->isAdvertising()) {
     gAdv->stop();
@@ -481,11 +485,11 @@ static void pauseBLE() {
 
   disconnectAllBlePeers();
   resetBleSubscriptions();
-  gBleStopping = false;
 }
 
 static void ensureBleHidInited(BLEHidMode mode) {
   (void)mode;
+  gBleSessionActive.store(true);
   if (gBleInited) return;
 
   Serial.println("[BLE Pair] Initializing BLE...");
@@ -531,13 +535,12 @@ static void ensureBleHidInited(BLEHidMode mode) {
 
   gBleInited = true;
   gBleMode = BLE_HID_KEYBOARD;
-  gBleStopping = false;
   resetBleSubscriptions();
   Serial.println("[BLE Pair] BLE/HID initialized");
 }
 
 static void stopBLE() {
-  gBleStopping = true;
+  gBleSessionActive.store(false);
 
   if (!gBleInited && !gServer && !gHid && !gAdv) {
     resetBleRuntimeState();
@@ -830,6 +833,7 @@ void handleBluetoothSubmenu() {
   static bool scriptDone = false;
   static String selectedFile = "";
   static bool waitingForConnection = false;
+  static uint32_t waitStartTime = 0;
   static bool justEnteredBadBLE = false;
   static bool inMouseMenu = false;
   static bool mouseRunning = false;
@@ -854,17 +858,13 @@ void handleBluetoothSubmenu() {
 
         if (!waitingForConnection) {
           waitingForConnection = true;
+          waitStartTime = millis();
           execLogs.clear();
           execLogs.push_back("Waiting for BLE...");
           displayBadKBScriptExec(display, selectedFile, execLogs, 0);
         }
 
         const uint32_t connectionTimeout = 30000;
-        static uint32_t waitStartTime = 0;
-        if (waitStartTime == 0) {
-          waitStartTime = millis();
-        }
-
         if (hasBleSubscribers(gKeyboardSubscribers)) {
           waitingForConnection = false;
           waitStartTime = 0;
@@ -934,6 +934,7 @@ void handleBluetoothSubmenu() {
         scriptRunning = false;
         scriptDone = false;
         waitingForConnection = false;
+        waitStartTime = 0;
         execLogs.clear();
         execLogTop = 0;
         if (gAdv && gAdv->isAdvertising()) {
@@ -948,6 +949,7 @@ void handleBluetoothSubmenu() {
         scriptRunning = true;
         scriptDone = false;
         waitingForConnection = false;
+        waitStartTime = 0;
       }
     } else {
       bool backClick = buttonBack.isClick();
@@ -968,6 +970,7 @@ void handleBluetoothSubmenu() {
         scriptRunning = true;
         scriptDone = false;
         waitingForConnection = false;
+        waitStartTime = 0;
         execLogs.clear();
         execLogTop = 0;
         ensureBleHidInited(BLE_HID_KEYBOARD);
@@ -977,6 +980,7 @@ void handleBluetoothSubmenu() {
         inBadBLE = false;
         explorerLoaded = false;
         justEnteredBadBLE = false;
+        waitStartTime = 0;
         pauseBLE();
         display.clearDisplay();
         displayBluetoothMenu(display, bluetoothMenuIndex);
@@ -1183,6 +1187,7 @@ void handleBluetoothSubmenu() {
           inMouseMenu = false;
           explorerLoaded = false;
           justEnteredBadBLE = true;
+          waitStartTime = 0;
           ensureBleHidInited(BLE_HID_KEYBOARD);
           Serial.println(F("[BadKB] Entered BadKB"));
         } else if (bluetoothMenuIndex == 4) {
