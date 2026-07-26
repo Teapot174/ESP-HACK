@@ -262,7 +262,6 @@ static bool cc1101IsConnected() {
 static bool cc1101PinsReady = false;
 static bool cc1101Initialized = false;
 
-// Tracks whether RCSwitch currently has an interrupt registered.
 static bool rcSwitchReceiveEnabled = false;
 
 static void syncCC1101PinsFromGPIOConfig() {
@@ -2335,7 +2334,6 @@ bool analyzerHandleInput() {
     );
   }
 
-  // Move the marker to the new trigger value immediately.
   analyzerState.threshold = analyzerTrigLevel;
 
   if (displayChanged) {
@@ -2507,7 +2505,6 @@ void OLED_printAnalyzer() {
   }
 
   display.setCursor(1, 55);
-  display.print("T");
   display.print((int)analyzerTrigLevel);
 
   analyzerDrawGraph(29, 57);
