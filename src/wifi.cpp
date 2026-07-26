@@ -20,6 +20,13 @@ extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 void createDefaultPortal();
 void saveCapturedDataToCSV(String csvLine);
 
+static void resetWiFiMenuButtons() {
+  buttonUp.resetStates();
+  buttonDown.resetStates();
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+}
+
 bool inSpamMenu = false, isSpamming = false;
 bool inEvilPortal = false, apRunning = false;
 bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
@@ -226,14 +233,24 @@ uint16_t generateBeaconSpamPacket(const char *ssid) {
 void setupBeaconSpamWifi() {
   randomSeed(esp_random());
   currentBeaconOffset = 0;
+
+  // Deauth leaves promiscuous mode enabled; reset the radio before raw AP TX.
+  esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(NULL);
   WiFi.disconnect();
+  WiFi.mode(WIFI_OFF);
+  delay(150);
   WiFi.mode(WIFI_AP);
-  esp_wifi_set_mode(WIFI_MODE_AP);
+  // Explicitly start the AP interface used by esp_wifi_80211_tx().
+  WiFi.softAP("ESP-HACK", "", beaconSpamChannel, false, 1);
+  delay(150);
   esp_wifi_set_channel(beaconSpamChannel, WIFI_SECOND_CHAN_NONE);
 }
 
 void teardownBeaconSpamWifi() {
   esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(NULL);
+  WiFi.softAPdisconnect(true);
   WiFi.disconnect();
   WiFi.mode(WIFI_OFF);
   memset(beaconSpamPacket, 0, sizeof(beaconSpamPacket));
@@ -536,6 +553,7 @@ void packetsStopSniffing() {
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_rx_cb(NULL);
   WiFi.mode(WIFI_OFF);
+  delay(150);
   packetsBssidSet = false;
 }
 
@@ -1051,7 +1069,11 @@ void handleDeauthSubmenu() {
       inDeauthMenu = false;
       WiFi.scanDelete();
       wifiListUsesScanResults = false;
+      esp_wifi_set_promiscuous(false);
+      esp_wifi_set_promiscuous_rx_cb(NULL);
       WiFi.mode(WIFI_OFF);
+      delay(150);
+      resetWiFiMenuButtons();
       displayWiFiMenu(display, wifiMenuIndex);
     }
 
@@ -1084,7 +1106,11 @@ void handleDeauthSubmenu() {
     inDeauthMenu = false;
     WiFi.scanDelete();
     wifiListUsesScanResults = false;
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
     WiFi.mode(WIFI_OFF);
+    delay(150);
+    resetWiFiMenuButtons();
     displayWiFiMenu(display, wifiMenuIndex);
   }
 }
@@ -1149,6 +1175,7 @@ void handlePacketsMenu() {
       isPacketViewing = false;
       inPacketsMenu = false;
       wifiListUsesScanResults = false;
+      resetWiFiMenuButtons();
       displayWiFiMenu(display, wifiMenuIndex);
     }
     return;
@@ -1183,6 +1210,10 @@ void handlePacketsMenu() {
     WiFi.scanDelete();
     wifiListUsesScanResults = false;
     WiFi.mode(WIFI_OFF);
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    delay(150);
+    resetWiFiMenuButtons();
     displayWiFiMenu(display, wifiMenuIndex);
   }
 }
@@ -1309,6 +1340,8 @@ void handleWiFiSubmenu() {
           clearBeaconLog();
           setupBeaconSpamWifi();
           displaySpamActive();
+          // Let the Wi-Fi mode change finish before the first raw TX.
+          return;
         } else {
           teardownBeaconSpamWifi();
           displaySpamPrompt();
