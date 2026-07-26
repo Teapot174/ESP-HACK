@@ -8,6 +8,8 @@
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEAdvertising.h>
+#include <array>
+#include <freertos/FreeRTOS.h>
 #include "menu/bluetooth.h"
 #include "ble_spam.h"
 #include "menu/subghz.h"
@@ -78,19 +80,136 @@ enum BLEHidMode {
 
 static const uint8_t kSharedBleAddr[6] = {0x33, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
 
+using BleSubscriberHandles =
+    std::array<uint16_t, CONFIG_BT_NIMBLE_MAX_CONNECTIONS>;
+
+static BleSubscriberHandles emptyBleSubscriberHandles() {
+  BleSubscriberHandles handles;
+  handles.fill(BLE_HS_CONN_HANDLE_NONE);
+  return handles;
+}
+
 bool                  gBleInited   = false;
 NimBLEServer*         gServer      = nullptr;
 NimBLEHIDDevice*      gHid         = nullptr;
 NimBLECharacteristic* gKeyboardInput = nullptr;
 NimBLECharacteristic* gMouseInput    = nullptr;
 NimBLEAdvertising*    gAdv         = nullptr;
-uint16_t              gConnHandle  = 0xFFFF;
 BLEHidMode            gBleMode     = BLE_HID_NONE;
-bool                  gBleConnected = false;
 bool                  gBleStopping = false;
+BleSubscriberHandles  gKeyboardSubscribers = emptyBleSubscriberHandles();
+BleSubscriberHandles  gMouseSubscribers = emptyBleSubscriberHandles();
+portMUX_TYPE           gBleSubscriptionMux = portMUX_INITIALIZER_UNLOCKED;
+
+static bool hasBleSubscriberUnlocked(
+    const BleSubscriberHandles &subscribers,
+    uint16_t handle
+) {
+  for (uint16_t subscriber : subscribers) {
+    if (subscriber == handle) return true;
+  }
+  return false;
+}
+
+static bool hasBleSubscribers(const BleSubscriberHandles &subscribers) {
+  bool hasSubscribers = false;
+
+  portENTER_CRITICAL(&gBleSubscriptionMux);
+  for (uint16_t subscriber : subscribers) {
+    if (subscriber != BLE_HS_CONN_HANDLE_NONE) {
+      hasSubscribers = true;
+      break;
+    }
+  }
+  portEXIT_CRITICAL(&gBleSubscriptionMux);
+
+  return hasSubscribers;
+}
+
+static bool addBleSubscriber(
+    BleSubscriberHandles &subscribers,
+    uint16_t handle
+) {
+  bool added = false;
+
+  portENTER_CRITICAL(&gBleSubscriptionMux);
+  if (!hasBleSubscriberUnlocked(subscribers, handle)) {
+    for (uint16_t &subscriber : subscribers) {
+      if (subscriber == BLE_HS_CONN_HANDLE_NONE) {
+        subscriber = handle;
+        added = true;
+        break;
+      }
+    }
+  }
+  portEXIT_CRITICAL(&gBleSubscriptionMux);
+
+  return added;
+}
+
+static bool removeBleSubscriberUnlocked(
+    BleSubscriberHandles &subscribers,
+    uint16_t handle
+) {
+  bool removed = false;
+  for (uint16_t &subscriber : subscribers) {
+    if (subscriber == handle) {
+      subscriber = BLE_HS_CONN_HANDLE_NONE;
+      removed = true;
+    }
+  }
+  return removed;
+}
+
+static bool removeBleSubscriber(
+    BleSubscriberHandles &subscribers,
+    uint16_t handle
+) {
+  portENTER_CRITICAL(&gBleSubscriptionMux);
+  const bool removed = removeBleSubscriberUnlocked(subscribers, handle);
+  portEXIT_CRITICAL(&gBleSubscriptionMux);
+
+  return removed;
+}
+
+static void resetBleSubscriptions() {
+  portENTER_CRITICAL(&gBleSubscriptionMux);
+  gKeyboardSubscribers.fill(BLE_HS_CONN_HANDLE_NONE);
+  gMouseSubscribers.fill(BLE_HS_CONN_HANDLE_NONE);
+  portEXIT_CRITICAL(&gBleSubscriptionMux);
+}
+
+static void removeBleSubscriptions(uint16_t handle) {
+  portENTER_CRITICAL(&gBleSubscriptionMux);
+  removeBleSubscriberUnlocked(gKeyboardSubscribers, handle);
+  removeBleSubscriberUnlocked(gMouseSubscribers, handle);
+  portEXIT_CRITICAL(&gBleSubscriptionMux);
+}
+
+static bool hasBleConnections() {
+  return gServer && gServer->getConnectedCount() > 0;
+}
+
+static void startBleAdvertisingIfCapacity() {
+  if (!gServer ||
+      !gAdv ||
+      gBleStopping ||
+      gAdv->isAdvertising() ||
+      gServer->getConnectedCount() >= CONFIG_BT_NIMBLE_MAX_CONNECTIONS) {
+    return;
+  }
+
+  if (gAdv->start()) {
+    Serial.printf(
+        "[BLE Pair] Advertising started (%u/%u peers)\n",
+        gServer->getConnectedCount(),
+        CONFIG_BT_NIMBLE_MAX_CONNECTIONS
+    );
+  }
+}
 
 static inline void _bb_hidSend(const uint8_t rpt[8]) {
-  if (!gKeyboardInput) return;
+  if (!gKeyboardInput || !hasBleSubscribers(gKeyboardSubscribers)) return;
   gKeyboardInput->setValue((uint8_t*)rpt, 8);
   gKeyboardInput->notify();
   delay(12);
@@ -106,20 +225,11 @@ static inline void _bb_hidRelease() {
 }
 
 static inline void _bm_sendMouseReport(int8_t x, int8_t y, uint8_t buttons = 0) {
-  if (!gMouseInput) return;
+  if (!gMouseInput || !hasBleSubscribers(gMouseSubscribers)) return;
   MouseReport report = {buttons, x, y, 0};
   gMouseInput->setValue(reinterpret_cast<uint8_t*>(&report), sizeof(report));
   gMouseInput->notify();
   delay(10);
-}
-
-static inline bool _bb_isNotifyEnabled(NimBLECharacteristic* ch) {
-  if (!ch) return false;
-  NimBLEDescriptor* cccd = ch->getDescriptorByUUID((uint16_t)0x2902);
-  if (!cccd) return false;
-  std::string v = cccd->getValue();
-  if (v.size() < 2) return false;
-  return (static_cast<uint8_t>(v[0]) & 0x01) != 0;
 }
 
 // BadUSB simbols
@@ -209,9 +319,9 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
     displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
     return false;
   }
-  if (gServer->getConnectedCount() == 0) {
-    logs.push_back("No BLE connection");
-    Serial.println("[BadKB] No BLE connection");
+  if (!hasBleSubscribers(gKeyboardSubscribers)) {
+    logs.push_back("No BLE keyboard");
+    Serial.println("[BadKB] No BLE keyboard subscription");
     displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
     return false;
   }
@@ -273,20 +383,63 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
   return true;
 }
 
+class HidInputCallbacks : public NimBLECharacteristicCallbacks {
+  void onSubscribe(
+      NimBLECharacteristic *characteristic,
+      NimBLEConnInfo &connInfo,
+      uint16_t subValue
+  ) override {
+    const bool subscribedToNotifications = (subValue & 0x01) != 0;
+    const uint16_t handle = connInfo.getConnHandle();
+
+    if (characteristic == gKeyboardInput) {
+      if (subscribedToNotifications) {
+        if (addBleSubscriber(gKeyboardSubscribers, handle)) {
+          Serial.printf(
+              "[BLE HID] Keyboard subscribed (handle=%u)\n",
+              handle
+          );
+        }
+      } else if (removeBleSubscriber(gKeyboardSubscribers, handle)) {
+        Serial.printf(
+            "[BLE HID] Keyboard unsubscribed (handle=%u)\n",
+            handle
+        );
+      }
+    } else if (characteristic == gMouseInput) {
+      if (subscribedToNotifications) {
+        if (addBleSubscriber(gMouseSubscribers, handle)) {
+          Serial.printf(
+              "[BLE HID] Mouse subscribed (handle=%u)\n",
+              handle
+          );
+        }
+      } else if (removeBleSubscriber(gMouseSubscribers, handle)) {
+        Serial.printf(
+            "[BLE HID] Mouse unsubscribed (handle=%u)\n",
+            handle
+        );
+      }
+    }
+  }
+};
+
 class PairServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
-    gConnHandle = connInfo.getConnHandle();
-    gBleConnected = true;
-    pServer->updateConnParams(gConnHandle, 6, 6, 0, 30);
-    Serial.printf("[BLE Pair] Connected (handle=%u)\n", gConnHandle);
+    const uint16_t handle = connInfo.getConnHandle();
+    pServer->updateConnParams(handle, 6, 6, 0, 30);
+    Serial.printf("[BLE Pair] Connected (handle=%u)\n", handle);
+    startBleAdvertisingIfCapacity();
   }
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
-    Serial.printf("[BLE Pair] Disconnected, reason=%d\n", reason);
-    gBleConnected = false;
-    gConnHandle = 0xFFFF;
-    if (!gBleStopping && gAdv) {
-      gAdv->start();
-    }
+    const uint16_t handle = connInfo.getConnHandle();
+    Serial.printf(
+        "[BLE Pair] Disconnected (handle=%u, reason=%d)\n",
+        handle,
+        reason
+    );
+    removeBleSubscriptions(handle);
+    startBleAdvertisingIfCapacity();
   }
 };
 
@@ -300,10 +453,9 @@ static void resetBleRuntimeState() {
   gKeyboardInput = nullptr;
   gMouseInput = nullptr;
   gAdv = nullptr;
-  gConnHandle = 0xFFFF;
   gBleMode = BLE_HID_NONE;
-  gBleConnected = false;
   gBleStopping = false;
+  resetBleSubscriptions();
 }
 
 static void disconnectAllBlePeers() {
@@ -328,8 +480,7 @@ static void pauseBLE() {
   }
 
   disconnectAllBlePeers();
-  gBleConnected = false;
-  gConnHandle = 0xFFFF;
+  resetBleSubscriptions();
   gBleStopping = false;
 }
 
@@ -353,6 +504,9 @@ static void ensureBleHidInited(BLEHidMode mode) {
   gHid = new NimBLEHIDDevice(gServer);
   gKeyboardInput = gHid->getInputReport(1);
   gMouseInput = gHid->getInputReport(2);
+  static HidInputCallbacks sHidInputCallbacks;
+  gKeyboardInput->setCallbacks(&sHidInputCallbacks);
+  gMouseInput->setCallbacks(&sHidInputCallbacks);
 
   gHid->setManufacturer("ESP-HACK");
   gHid->setPnp(0x02, 0x303A, 0x4001, 0x0100);
@@ -377,8 +531,8 @@ static void ensureBleHidInited(BLEHidMode mode) {
 
   gBleInited = true;
   gBleMode = BLE_HID_KEYBOARD;
-  gBleConnected = false;
   gBleStopping = false;
+  resetBleSubscriptions();
   Serial.println("[BLE Pair] BLE/HID initialized");
 }
 
@@ -696,10 +850,7 @@ void handleBluetoothSubmenu() {
     if (scriptSelected) {
       if (scriptRunning) {
         ensureBleHidInited(BLE_HID_KEYBOARD);
-        if (!(gAdv && gAdv->isAdvertising())) {
-          gAdv->start();
-          Serial.println("[BadKB] Started BLE advertising");
-        }
+        startBleAdvertisingIfCapacity();
 
         if (!waitingForConnection) {
           waitingForConnection = true;
@@ -714,7 +865,7 @@ void handleBluetoothSubmenu() {
           waitStartTime = millis();
         }
 
-        if (gServer && gServer->getConnectedCount() > 0) {
+        if (hasBleSubscribers(gKeyboardSubscribers)) {
           waitingForConnection = false;
           waitStartTime = 0;
           delay(3000);
@@ -753,16 +904,12 @@ void handleBluetoothSubmenu() {
   } else if (inMouseMenu) {
     if (!mousePairingStarted) {
       ensureBleHidInited(BLE_HID_MOUSE);
-      if (gAdv && !gAdv->isAdvertising()) {
-        gAdv->start();
-      }
+      startBleAdvertisingIfCapacity();
       mousePairingStarted = true;
     }
     if (mouseRunning) {
       ensureBleHidInited(BLE_HID_MOUSE);
-      if (!(gAdv && gAdv->isAdvertising()) && !gBleConnected && gAdv) {
-        gAdv->start();
-      }
+      startBleAdvertisingIfCapacity();
     }
   } else {
     if (bleSpamState == IDLE) {
@@ -841,11 +988,12 @@ void handleBluetoothSubmenu() {
   } else if (inMouseMenu) {
     static MenuButtonState mouseUpHeld;
     static MenuButtonState mouseDownHeld;
-    const bool mouseReady = gBleConnected;
+    const bool mouseConnected = hasBleConnections();
+    const bool mouseReady = hasBleSubscribers(gMouseSubscribers);
     const char* mouseErrorText = (mouseRunning && gBleInited && !gMouseInput) ? "BLE error" : "";
 
-    if (lastMouseConnected != gBleConnected || lastMouseReady != mouseReady) {
-      lastMouseConnected = gBleConnected;
+    if (lastMouseConnected != mouseConnected || lastMouseReady != mouseReady) {
+      lastMouseConnected = mouseConnected;
       lastMouseReady = mouseReady;
       if (mouseReady) {
         mouseIgnoreButtonsUntilRelease = true;
@@ -856,7 +1004,7 @@ void handleBluetoothSubmenu() {
                                  mouseRunning, mouseErrorText);
       } else {
         mouseIgnoreButtonsUntilRelease = true;
-        displayMousePairScreen(gBleConnected, mouseReady, mouseErrorText);
+        displayMousePairScreen(mouseConnected, mouseReady, mouseErrorText);
       }
     }
 
@@ -927,11 +1075,9 @@ void handleBluetoothSubmenu() {
         mouseRunning = !mouseRunning;
         if (mouseRunning) {
           ensureBleHidInited(BLE_HID_MOUSE);
-          if (gAdv && !gAdv->isAdvertising()) {
-            gAdv->start();
-          }
+          startBleAdvertisingIfCapacity();
         }
-        lastMouseConnected = gBleConnected;
+        lastMouseConnected = hasBleConnections();
         lastMouseReady = false;
         resetMouseMotionState(mousePhase, mousePrevX, mousePrevY, mouseLastStep);
       }
@@ -1047,7 +1193,7 @@ void handleBluetoothSubmenu() {
           mouseSelection = 0;
           mousePairingStarted = false;
           mouseIgnoreButtonsUntilRelease = true;
-          lastMouseConnected = gBleConnected;
+          lastMouseConnected = hasBleConnections();
           lastMouseReady = false;
           displayMousePairScreen(false, false, "");
           Serial.println(F("[Mouse] Entered Mouse menu"));
