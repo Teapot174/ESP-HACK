@@ -32,7 +32,7 @@ ESP-HACK — мощная универсальная прошивка для ESP
 
 ### Bluetooth
 
-- BLE-Spam:
+- Spam:
 IOS, Android, Samsung, Xiaomi, Windows.
 - BadBLE
 - Mouse
@@ -97,8 +97,6 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Holtec
 - Ansonic
 - Chamberlain
-- StarLine  
-- KeeLoq
 - Любой другой протокол с RAW режимом
 
 ---
