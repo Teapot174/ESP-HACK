@@ -43,7 +43,4 @@
 // Firmware version
 static const char* FIRMWARE = "v1.2";
 
-extern char wifiPortalName[33];
-extern char bleDeviceName[33];
-
 #endif

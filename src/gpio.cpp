@@ -3,6 +3,7 @@
 #include "Explorer.h"
 #include "interface.h"
 #include "CONFIG.h"
+#include "misc.h"
 #include "display.h"
 #include <GyverButton.h>
 #include <SPI.h>
@@ -59,7 +60,7 @@ struct StoredIButtonConfig {
 static const uint32_t NRF24_CONFIG_SIGNATURE = 0x4E524632UL;
 static const uint32_t IBUTTON_CONFIG_SIGNATURE = 0x4942544EUL;
 static const int IBUTTON_CONFIG_EEPROM_ADDRESS = sizeof(StoredNRF24Config);
-static const int GPIO_EEPROM_SIZE = sizeof(StoredNRF24Config) + sizeof(StoredIButtonConfig);
+static const int GPIO_EEPROM_SIZE = ESPHACK_EEPROM_SIZE;
 static bool gpioStorageReady = false;
 
 // Pins
@@ -76,7 +77,7 @@ const byte IBUTTON_PINS_COUNT = 6;
 // iButton
 static const byte IBUTTON_MENU_ITEM_COUNT = 3;
 static const char* iButtonMenuItems[] = {"Read", "Write", "Emulate"};
-static const char* IBUTTON_DIR = "/iButton";
+static const char* IBUTTON_DIR = "/ibutton";
 static const int IBUTTON_MAX_FILES = 50;
 
 enum IButtonState {
@@ -105,6 +106,12 @@ bool iButtonCrcOk = false;
 bool iButtonEmulationActive = false;
 bool inGPIOPlaceholder = false;
 
+static const byte PN532_MENU_ITEM_COUNT = 4;
+static const char* pn532MenuItems[] = {"Read", "Write", "Emulate", "Config"};
+bool inPN532Submenu = false;
+bool inPN532Placeholder = false;
+byte pn532MenuIndex = 0;
+
 static const char* iButtonExts[] = {".ibtn"};
 ExplorerEntry iButtonFileList[IBUTTON_MAX_FILES];
 ExplorerState iButtonExplorer;
@@ -124,7 +131,11 @@ byte full_channels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1
 
 bool ensureGPIOStorageReady() {
   if (gpioStorageReady) return true;
-  gpioStorageReady = EEPROM.begin(GPIO_EEPROM_SIZE);
+  if (EEPROM.length() >= GPIO_EEPROM_SIZE) {
+    gpioStorageReady = true;
+  } else {
+    gpioStorageReady = EEPROM.begin(GPIO_EEPROM_SIZE);
+  }
   if (!gpioStorageReady) {
     Serial.println(F("GPIO storage init failed"));
   }
@@ -330,7 +341,7 @@ static const char* getNRF24PinName(byte pin) {
 }
 
 void displayNRF24Menu(int previousIndex = -1) {
-  displayAnimatedMenu(display, nrf24MenuItems, NRF24_MENU_ITEM_COUNT, nrf24MenuIndex, previousIndex);
+  displayInterfaceSubmenu(display, nrf24MenuItems, NRF24_MENU_ITEM_COUNT, nrf24MenuIndex, previousIndex);
 }
 
 static int16_t getNRF24ConfigArrowY(byte selection) {
@@ -379,7 +390,7 @@ void displayNRF24Config(int previousIndex = -1) {
 }
 
 void displayJammingMenu(int previousIndex = -1) {
-  displayAnimatedMenu(display, jammingModes, JAMMING_MODE_COUNT, jammingModeIndex, previousIndex);
+  displayInterfaceSubmenu(display, jammingModes, JAMMING_MODE_COUNT, jammingModeIndex, previousIndex);
 }
 
 void displayJammingActive() {
@@ -566,12 +577,13 @@ void handleJammingMenu() {
 
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
 
-  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = jammingModeIndex;
     jammingModeIndex = (jammingModeIndex - 1 + JAMMING_MODE_COUNT) % JAMMING_MODE_COUNT;
     displayJammingMenu(previousIndex);
   }
-  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
     byte previousIndex = jammingModeIndex;
     jammingModeIndex = (jammingModeIndex + 1) % JAMMING_MODE_COUNT;
     displayJammingMenu(previousIndex);
@@ -631,12 +643,13 @@ void handleNRF24Submenu() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
-  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = nrf24MenuIndex;
     nrf24MenuIndex = (nrf24MenuIndex - 1 + NRF24_MENU_ITEM_COUNT) % NRF24_MENU_ITEM_COUNT;
     displayNRF24Menu(previousIndex);
   }
-  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
     byte previousIndex = nrf24MenuIndex;
     nrf24MenuIndex = (nrf24MenuIndex + 1) % NRF24_MENU_ITEM_COUNT;
     displayNRF24Menu(previousIndex);
@@ -834,7 +847,7 @@ bool startIButtonEmulation() {
 }
 
 void displayIButtonMenu(int previousIndex = -1) {
-  displayAnimatedMenu(display, iButtonMenuItems, IBUTTON_MENU_ITEM_COUNT, iButtonMenuIndex, previousIndex);
+  displayInterfaceSubmenu(display, iButtonMenuItems, IBUTTON_MENU_ITEM_COUNT, iButtonMenuIndex, previousIndex);
 }
 
 void displayIButtonReadWaiting() {
@@ -973,6 +986,25 @@ void displayGPIOPlaceholder() {
   display.setTextSize(2);
   display.setCursor(10, 8);
   display.print(gpioMenuItems[gpioMenuIndex]);
+  display.setTextSize(1);
+  display.setCursor(10, 34);
+  display.print(F("Coming soon"));
+  display.setCursor(10, 50);
+  display.print(F("Back to return"));
+  display.display();
+}
+
+void displayPN532Menu(int previousIndex = -1) {
+  displayInterfaceSubmenu(display, pn532MenuItems, PN532_MENU_ITEM_COUNT, pn532MenuIndex, previousIndex);
+}
+
+void displayPN532Placeholder() {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setTextSize(2);
+  display.setCursor(10, 8);
+  display.print(pn532MenuItems[pn532MenuIndex]);
   display.setTextSize(1);
   display.setCursor(10, 34);
   display.print(F("Coming soon"));
@@ -1132,12 +1164,13 @@ void handleIButtonSubmenu() {
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
 
   if (iButtonState == IBUTTON_MENU) {
-    if (isMenuButtonPress(BUTTON_UP, menuUpHeld)) {
+    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    if (isMenuButtonPress(BUTTON_UP, menuUpHeld, repeatDelayMs)) {
       byte previousIndex = iButtonMenuIndex;
       iButtonMenuIndex = (iButtonMenuIndex - 1 + IBUTTON_MENU_ITEM_COUNT) % IBUTTON_MENU_ITEM_COUNT;
       displayIButtonMenu(previousIndex);
     }
-    if (isMenuButtonPress(BUTTON_DOWN, menuDownHeld)) {
+    if (isMenuButtonPress(BUTTON_DOWN, menuDownHeld, repeatDelayMs)) {
       byte previousIndex = iButtonMenuIndex;
       iButtonMenuIndex = (iButtonMenuIndex + 1) % IBUTTON_MENU_ITEM_COUNT;
       displayIButtonMenu(previousIndex);
@@ -1342,9 +1375,45 @@ void handleIButtonSubmenu() {
   }
 }
 
+void handlePN532Submenu() {
+  static MenuButtonState upHeld;
+  static MenuButtonState downHeld;
+  buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+
+  if (inPN532Placeholder) {
+    if (buttonOK.isClick() || buttonBack.isClick()) {
+      inPN532Placeholder = false;
+      displayPN532Menu();
+    }
+    return;
+  }
+
+  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
+    byte previousIndex = pn532MenuIndex;
+    pn532MenuIndex = (pn532MenuIndex - 1 + PN532_MENU_ITEM_COUNT) % PN532_MENU_ITEM_COUNT;
+    displayPN532Menu(previousIndex);
+  }
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
+    byte previousIndex = pn532MenuIndex;
+    pn532MenuIndex = (pn532MenuIndex + 1) % PN532_MENU_ITEM_COUNT;
+    displayPN532Menu(previousIndex);
+  }
+  if (buttonOK.isClick()) {
+    inPN532Placeholder = true;
+    displayPN532Placeholder();
+  }
+  if (buttonBack.isClick()) {
+    inPN532Submenu = false;
+    inPN532Placeholder = false;
+    displayGPIOMenu(display, gpioMenuIndex);
+  }
+}
+
 void handleGPIOSubmenu() {
   if (inNRF24Submenu || inNRF24Config || inJammingMenu || inJammingActive || inSpectrumAnalyzer || inNRF24InitError) return handleNRF24Submenu();
   if (inIButtonSubmenu) return handleIButtonSubmenu();
+  if (inPN532Submenu) return handlePN532Submenu();
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
@@ -1355,12 +1424,13 @@ void handleGPIOSubmenu() {
     }
     return;
   }
-  if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = gpioMenuIndex;
     gpioMenuIndex = (gpioMenuIndex - 1 + GPIO_MENU_ITEM_COUNT) % GPIO_MENU_ITEM_COUNT;
     displayGPIOMenu(display, gpioMenuIndex, previousIndex);
   }
-  if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+  if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
     byte previousIndex = gpioMenuIndex;
     gpioMenuIndex = (gpioMenuIndex + 1) % GPIO_MENU_ITEM_COUNT;
     displayGPIOMenu(display, gpioMenuIndex, previousIndex);
@@ -1386,13 +1456,17 @@ void handleGPIOSubmenu() {
         displayNRF24Menu();
         break;
       case 2:
-        inGPIOPlaceholder = true;
-        displayGPIOPlaceholder();
+        inPN532Submenu = true;
+        inPN532Placeholder = false;
+        pn532MenuIndex = 0;
+        displayPN532Menu();
         break;
     }
   }
   if (buttonBack.isClick()) {
     inGPIOPlaceholder = false;
+    inPN532Submenu = false;
+    inPN532Placeholder = false;
     returnToMainMenu();
     Serial.println(F("Back to main menu"));
   }

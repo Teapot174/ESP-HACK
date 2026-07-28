@@ -2,9 +2,11 @@
 #include <GyverButton.h>
 #include <SD.h>
 #include <SPI.h>
+#include <EEPROM.h>
 #include <cstring>
 #include "esp_wifi.h"
 #include "CONFIG.h"
+#include "misc.h"
 #include "interface.h"
 #include "subghz.h"
 #include "menu/wifi.h"
@@ -37,7 +39,7 @@ SPIClass sdSPI(HSPI);
 bool sdCardReady = false;
 static bool sdSetupComplete = false;
 
-const char* menuItems[] = {"WiFi", "Bluetooth", "SubGHz", "Infrared", "GPIO", "Games", "Config"};
+const char* menuItems[] = {"WiFi", "Bluetooth", "SubGHz", "Infrared", "GPIO", "Games", "Settings"};
 byte currentMenu = 0;
 bool inMenu = true;
 
@@ -57,6 +59,8 @@ byte gamesMenuIndex = 0;
 
 byte settingsMenuIndex = 0;
 byte colorSelectionIndex = 1;
+byte menu = 0;
+byte submenu = 0;
 
 extern const unsigned long standbyTimeoutOptionsMs[] = {0UL, 15000UL, 30000UL, 60000UL, 180000UL, 300000UL, 600000UL, 1800000UL};
 const char* standbyTimeoutLabels[] = {"Disable", "15s", "30s", "1m", "3m", "5m", "10m", "30m"};
@@ -89,13 +93,13 @@ void applyColorScheme() {
 }
 
 static void createSDDirectories() {
-  if (!SD.exists("/WiFi")) SD.mkdir("/WiFi");
-  if (!SD.exists("/WiFi/Wardriving")) SD.mkdir("/WiFi/Wardriving");
-  if (!SD.exists("/WiFi/Portals")) SD.mkdir("/WiFi/Portals");
-  if (!SD.exists("/BadKB")) SD.mkdir("/BadKB");
-  if (!SD.exists("/SubGHz")) SD.mkdir("/SubGHz");
-  if (!SD.exists("/Infrared")) SD.mkdir("/Infrared");
-  if (!SD.exists("/iButton")) SD.mkdir("/iButton");
+  if (!SD.exists("/wifi")) SD.mkdir("/wifi");
+  if (!SD.exists("/wifi/portals")) SD.mkdir("/wifi/portals");
+  if (!SD.exists("/wifi/captures")) SD.mkdir("/wifi/captures");
+  if (!SD.exists("/badkb")) SD.mkdir("/badkb");
+  if (!SD.exists("/subghz")) SD.mkdir("/subghz");
+  if (!SD.exists("/infrared")) SD.mkdir("/infrared");
+  if (!SD.exists("/ibutton")) SD.mkdir("/ibutton");
 }
 
 static void onSDCardReady() {
@@ -237,6 +241,8 @@ bool ensureSDReadyInteractive(bool allowSkip) {
 }
 
 void applyFactoryDefaults() {
+  menu = 0;
+  submenu = 0;
   colorSelectionIndex = 1;
   standbyTimeoutIndex = 2;
   standbyTimeoutMs = standbyTimeoutOptionsMs[standbyTimeoutIndex];
@@ -245,6 +251,57 @@ void applyFactoryDefaults() {
   strncpy(bleDeviceName, DEFAULT_BLE_DEVICE_NAME, sizeof(bleDeviceName));
   bleDeviceName[sizeof(bleDeviceName) - 1] = '\0';
   applyColorScheme();
+}
+
+struct AppearanceStorage {
+  uint32_t signature;
+  byte menu;
+  byte submenu;
+  byte color;
+  byte standby;
+};
+
+static const uint32_t APPEARANCE_STORAGE_SIGNATURE = 0x45535041UL;
+static bool appearanceStorageReady = false;
+
+static bool ensureAppearanceStorageReady() {
+  if (appearanceStorageReady) return true;
+  if (EEPROM.length() >= ESPHACK_EEPROM_SIZE) {
+    appearanceStorageReady = true;
+  } else {
+    appearanceStorageReady = EEPROM.begin(ESPHACK_EEPROM_SIZE);
+  }
+  return appearanceStorageReady;
+}
+
+static void saveAppearanceConfig() {
+  if (!ensureAppearanceStorageReady()) return;
+  AppearanceStorage stored = {
+    APPEARANCE_STORAGE_SIGNATURE,
+    menu,
+    submenu,
+    colorSelectionIndex,
+    standbyTimeoutIndex
+  };
+  EEPROM.put(ESPHACK_APPEARANCE_EEPROM_ADDRESS, stored);
+  EEPROM.commit();
+}
+
+static bool loadAppearanceConfig() {
+  if (!ensureAppearanceStorageReady()) return false;
+  AppearanceStorage stored;
+  EEPROM.get(ESPHACK_APPEARANCE_EEPROM_ADDRESS, stored);
+  if (stored.signature != APPEARANCE_STORAGE_SIGNATURE ||
+      stored.menu > 1 || stored.submenu > 1 ||
+      stored.color > 1 || stored.standby >= STANDBY_OPTION_COUNT) {
+    return false;
+  }
+  menu = stored.menu;
+  submenu = stored.submenu;
+  colorSelectionIndex = stored.color;
+  standbyTimeoutIndex = stored.standby;
+  standbyTimeoutMs = standbyTimeoutOptionsMs[standbyTimeoutIndex];
+  return true;
 }
 
 void resetToFactoryDefaults() {
@@ -256,13 +313,10 @@ void resetToFactoryDefaults() {
 }
 
 void saveConfig() {
+  saveAppearanceConfig();
   SD.remove(CONFIG_PATH);
   File cfg = SD.open(CONFIG_PATH, FILE_WRITE);
   if (!cfg) return;
-  cfg.print(F("standby="));
-  cfg.println(standbyTimeoutConfigValues[standbyTimeoutIndex]);
-  cfg.print(F("color="));
-  cfg.println(colorSelectionIndex == 0 ? F("white") : F("black"));
   cfg.print(F("WiFi_NAME="));
   cfg.println(wifiPortalName);
   cfg.print(F("BLE_NAME="));
@@ -272,8 +326,11 @@ void saveConfig() {
 
 void loadConfig() {
   applyFactoryDefaults();
-  byte parsedStandby = standbyTimeoutIndex;
-  byte parsedColor = colorSelectionIndex;
+  const bool appearanceLoaded = loadAppearanceConfig();
+  byte legacyStandby = standbyTimeoutIndex;
+  byte legacyColor = colorSelectionIndex;
+  byte legacyMenu = menu;
+  byte legacySubmenu = submenu;
   bool loaded = false;
   bool hasWifiName = false;
   bool hasBleName = false;
@@ -292,7 +349,7 @@ void loadConfig() {
           String opt = standbyTimeoutConfigValues[i];
           opt.toLowerCase();
           if (opt == val) {
-            parsedStandby = i;
+            legacyStandby = i;
             break;
           }
         }
@@ -300,8 +357,17 @@ void loadConfig() {
         String val = line.substring(6);
         val.trim();
         val.toLowerCase();
-        if (val == "white") parsedColor = 0;
-        else parsedColor = 1;
+        legacyColor = val == "white" ? 0 : 1;
+      } else if (line.startsWith("menu=")) {
+        String val = line.substring(5);
+        val.trim();
+        val.toLowerCase();
+        legacyMenu = (val == "flipper" || val == "list") ? 1 : 0;
+      } else if (line.startsWith("submenu=")) {
+        String val = line.substring(8);
+        val.trim();
+        val.toLowerCase();
+        legacySubmenu = (val == "flipper" || val == "list") ? 1 : 0;
       } else if (line.startsWith("WiFi_NAME=") || line.startsWith("wifi_name=")) {
         String val = line.substring(line.indexOf('=') + 1);
         val.trim();
@@ -321,12 +387,16 @@ void loadConfig() {
     cfg.close();
   }
 
-  standbyTimeoutIndex = parsedStandby;
-  standbyTimeoutMs = standbyTimeoutOptionsMs[standbyTimeoutIndex];
-  colorSelectionIndex = parsedColor;
+  if (!appearanceLoaded) {
+    standbyTimeoutIndex = legacyStandby;
+    standbyTimeoutMs = standbyTimeoutOptionsMs[standbyTimeoutIndex];
+    colorSelectionIndex = legacyColor;
+    menu = legacyMenu;
+    submenu = legacySubmenu;
+  }
   applyColorScheme();
 
-  if (!loaded || !hasWifiName || !hasBleName) {
+  if (!appearanceLoaded || !loaded || !hasWifiName || !hasBleName) {
     saveConfig();
   }
 }
@@ -351,14 +421,15 @@ void returnToMainMenu() {
   lastActivityTime = millis();
   standbyIgnoreUntilMs = millis() + 250;
   inMenu = true;
+  if (menu == 1) {
+    resetListInterfaceAnimation(currentMenu);
+  }
   OLED_printMenu(display, currentMenu);
 }
 
 static bool isMainMenuButtonPress(uint8_t pin, MenuButtonState &state) {
   const bool pressed = digitalRead(pin) == LOW;
   const unsigned long now = millis();
-  const unsigned long initialDelayMs = 250;
-  const unsigned long repeatDelayMs = 250;
 
   if (!pressed) {
     state.wasPressed = false;
@@ -368,12 +439,12 @@ static bool isMainMenuButtonPress(uint8_t pin, MenuButtonState &state) {
 
   if (!state.wasPressed) {
     state.wasPressed = true;
-    state.nextRepeatAt = now + initialDelayMs;
+    state.nextRepeatAt = now + getListInterfaceMenuInitialRepeatDelay();
     return true;
   }
 
   if (now >= state.nextRepeatAt) {
-    state.nextRepeatAt = now + repeatDelayMs;
+    state.nextRepeatAt = now + getListInterfaceMenuRepeatDelay();
     return true;
   }
 
@@ -467,11 +538,12 @@ void setup() {
   display.clearDisplay();
   display.display();
 
+  applyFactoryDefaults();
+  ensureAppearanceStorageReady();
+  loadAppearanceConfig();
+  applyColorScheme();
   if (!tryInitSDCard()) {
     ensureSDReadyInteractive(true);
-  }
-  if (!sdCardReady) {
-    applyFactoryDefaults();
   }
   buttonUp.resetStates();
   buttonDown.resetStates();
@@ -531,6 +603,12 @@ void loop() {
     bool anyClick = upPress || downPress || okClick || backClick;
     if (anyClick) {
       resetActivityTimer();
+    }
+
+    static unsigned long listRefreshMs = 0;
+    if (menu == 1 && !anyClick && millis() - listRefreshMs >= 333) {
+      listRefreshMs = millis();
+      displayListInterfaceMenu(display, currentMenu);
     }
 
     if (upPress) {

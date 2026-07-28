@@ -3,6 +3,7 @@
 
 #include "display.h"
 #include "CONFIG.h"
+#include "interface.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -321,10 +322,10 @@ static const unsigned char PROGMEM image_ArrowDown_bits[] = {0xf8, 0x70, 0x20};
 
 
 #define SUBGHZ_MENU_ITEM_COUNT 6
-static const char* subghzMenuItems[] = {"Read", "Send", "Analyzer", "Jammer", "Brute", "Read RAW"};
+static const char* subghzMenuItems[] = {"Read", "Read RAW", "Send", "Analyzer", "Jammer", "Brute"};
 
 inline void OLED_printSubGHzMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
-  displayAnimatedMenu(display, subghzMenuItems, SUBGHZ_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displayInterfaceSubmenu(display, subghzMenuItems, SUBGHZ_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

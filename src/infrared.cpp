@@ -125,7 +125,7 @@ FixedAttackState fixedAttack;
 static const char* irExts[] = {".ir"};
 ExplorerEntry irFileList[MAX_FILES];
 ExplorerState irExplorer;
-ExplorerConfig irExplorerCfg = {"/Infrared", irExts, 1, true, false, true, true};
+ExplorerConfig irExplorerCfg = {"/infrared", irExts, 1, true, false, true, true};
 
 #define MAX_SIGNALS 20
 String irSignalList[MAX_SIGNALS];
@@ -1010,7 +1010,7 @@ bool saveIRSignal() {
   String filename = "Infrared";
   File dir = SD.open(irExplorer.currentDir);
   if (!dir) {
-    Serial.println(F("Failed to open /Infrared directory"));
+    Serial.println(F("Failed to open /infrared directory"));
     return false;
   }
   dir.close();
@@ -1374,13 +1374,14 @@ void handleIRSubmenu() {
       display.display();
       lastMenuIndex = irMenuIndex;
     }
-    if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
       byte previousIndex = irMenuIndex;
       irMenuIndex = (irMenuIndex - 1 + IR_MENU_ITEM_COUNT) % IR_MENU_ITEM_COUNT;
       displayIRMenu(display, irMenuIndex, previousIndex);
       lastMenuIndex = irMenuIndex;
     }
-    if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+    if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
       byte previousIndex = irMenuIndex;
       irMenuIndex = (irMenuIndex + 1) % IR_MENU_ITEM_COUNT;
       displayIRMenu(display, irMenuIndex, previousIndex);

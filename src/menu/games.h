@@ -2,12 +2,13 @@
 #define GAMES_MENU_H
 
 #include "display.h"
+#include "interface.h"
 
 #define GAMES_MENU_ITEM_COUNT 5
 static const char* gamesMenuItems[] = {"Snake", "Bird", "Tetris", "Pong", "Doom"};
 
 inline void displayGamesMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
-  displayAnimatedMenu(display, gamesMenuItems, GAMES_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displayInterfaceSubmenu(display, gamesMenuItems, GAMES_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

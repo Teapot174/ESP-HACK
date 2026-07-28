@@ -30,14 +30,41 @@ extern void resetToFactoryDefaults();
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 extern void resetActivityTimer();
 
-enum SettingsDetail : byte { SETTINGS_NONE, SETTINGS_COLOR, SETTINGS_STANDBY, SETTINGS_UPDATE, SETTINGS_ABOUT };
+enum SettingsDetail : byte { SETTINGS_NONE, SETTINGS_INTERFACE, SETTINGS_COLOR, SETTINGS_STANDBY, SETTINGS_UPDATE, SETTINGS_ABOUT };
+enum InterfaceDetail : byte { INTERFACE_ROOT, INTERFACE_MENU };
 
 static SettingsDetail currentDetail = SETTINGS_NONE;
+static InterfaceDetail interfaceDetail = INTERFACE_ROOT;
+static bool interfaceMenuOpen = false;
+static byte interfaceMenuIndex = 0;
+static byte interfaceMenuWorking = 0;
 static byte standbySelectionIndex = 0;
 static byte colorSelectionWorking = 0;
 static bool colorNeedRedraw = true;
 static bool standbyNeedRedraw = true;
 static bool aboutNeedRedraw = true;
+
+static const char* interfaceItems[] = {"Menu", "Submenu", "Color", "Standby"};
+static const byte MENU_STYLE_ITEM_COUNT = 3;
+static const char* menuStyleItems[] = {"Original", "List", "Wii"};
+
+static void renderInterfaceMenu(int previousIndex = -1) {
+  displayInterfaceSubmenu(display, interfaceItems, 4, interfaceMenuIndex, previousIndex);
+}
+
+static void exitInterfaceDetail() {
+  interfaceDetail = INTERFACE_ROOT;
+  interfaceMenuIndex = 0;
+  renderInterfaceMenu();
+}
+
+void Interface() {
+  interfaceMenuOpen = true;
+  currentDetail = SETTINGS_INTERFACE;
+  interfaceDetail = INTERFACE_ROOT;
+  interfaceMenuIndex = 0;
+  renderInterfaceMenu();
+}
 
 static const char* updateExts[] = {".bin"};
 static const int UPDATE_MAX_FILES = 50;
@@ -47,7 +74,13 @@ static ExplorerConfig updateExplorerCfg = {"/", updateExts, 1, false, false, tru
 
 void exitSettingsDetail() {
   currentDetail = SETTINGS_NONE;
-  displaySettingsMenu(display, settingsMenuIndex);
+  if (interfaceMenuOpen) {
+    currentDetail = SETTINGS_INTERFACE;
+    interfaceDetail = INTERFACE_ROOT;
+    renderInterfaceMenu();
+  } else {
+    displaySettingsMenu(display, settingsMenuIndex);
+  }
   colorNeedRedraw = true;
   standbyNeedRedraw = true;
   aboutNeedRedraw = true;
@@ -55,7 +88,7 @@ void exitSettingsDetail() {
 
 void renderColorSetting(int previousIndex = -1) {
   colorNeedRedraw = false;
-  displayAnimatedMenu(display, colorOptions, COLOR_OPTION_COUNT, colorSelectionWorking, previousIndex);
+  displayInterfaceSubmenu(display, colorOptions, COLOR_OPTION_COUNT, colorSelectionWorking, previousIndex);
 }
 
 void renderAboutSetting() {
@@ -79,7 +112,7 @@ void renderAboutSetting() {
 
 void renderStandbySetting(byte index, int previousIndex = -1) {
   standbyNeedRedraw = false;
-  displayAnimatedMenu(display, standbyTimeoutLabels, STANDBY_OPTION_COUNT, index, previousIndex);
+  displayInterfaceSubmenu(display, standbyTimeoutLabels, STANDBY_OPTION_COUNT, index, previousIndex);
 }
 
 static void drawUpdateProgress(uint8_t progress) {
@@ -251,21 +284,13 @@ void handleStandbyDetail(bool upPress, bool downPress, bool okClick, bool backCl
 
 void enterSettingsDetail(byte menuIndex) {
   if (menuIndex == 0) {
-    currentDetail = SETTINGS_COLOR;
-    colorNeedRedraw = true;
-    colorSelectionWorking = colorSelectionIndex;
-    renderColorSetting();
+    Interface();
   } else if (menuIndex == 1) {
-    currentDetail = SETTINGS_STANDBY;
-    standbySelectionIndex = standbyTimeoutIndex;
-    standbyNeedRedraw = true;
-    renderStandbySetting(standbySelectionIndex);
-  } else if (menuIndex == 2) {
     ESP.restart();
-  } else if (menuIndex == 3) {
+  } else if (menuIndex == 2) {
     resetToFactoryDefaults();
     ESP.restart();
-  } else if (menuIndex == 4) {
+  } else if (menuIndex == 3) {
     if (!ensureSDReadyInteractive(true)) {
       displaySettingsMenu(display, settingsMenuIndex);
       return;
@@ -274,10 +299,71 @@ void enterSettingsDetail(byte menuIndex) {
     ExplorerInit(updateExplorer, updateFileList, UPDATE_MAX_FILES, updateExplorerCfg);
     ExplorerLoad(updateExplorer, updateExplorerCfg);
     ExplorerDraw(updateExplorer, display);
-  } else if (menuIndex == 5) {
+  } else if (menuIndex == 4) {
     currentDetail = SETTINGS_ABOUT;
     aboutNeedRedraw = true;
     renderAboutSetting();
+  }
+}
+
+static void handleInterfaceMenu(bool upPress, bool downPress, bool okClick, bool backClick) {
+  if (interfaceDetail == INTERFACE_MENU) {
+    if (upPress) {
+      byte previousIndex = interfaceMenuWorking;
+      interfaceMenuWorking = (interfaceMenuWorking + MENU_STYLE_ITEM_COUNT - 1) % MENU_STYLE_ITEM_COUNT;
+      displayInterfaceSubmenu(display, menuStyleItems, MENU_STYLE_ITEM_COUNT, interfaceMenuWorking, previousIndex);
+    }
+    if (downPress) {
+      byte previousIndex = interfaceMenuWorking;
+      interfaceMenuWorking = (interfaceMenuWorking + 1) % MENU_STYLE_ITEM_COUNT;
+      displayInterfaceSubmenu(display, menuStyleItems, MENU_STYLE_ITEM_COUNT, interfaceMenuWorking, previousIndex);
+    }
+    if (okClick) {
+      if (interfaceMenuWorking <= 1) {
+        menu = interfaceMenuWorking;
+        saveConfig();
+      }
+      exitInterfaceDetail();
+    }
+    if (backClick) exitInterfaceDetail();
+    return;
+  }
+
+  if (upPress) {
+    byte previousIndex = interfaceMenuIndex;
+    interfaceMenuIndex = (interfaceMenuIndex + 3) % 4;
+    renderInterfaceMenu(previousIndex);
+  }
+  if (downPress) {
+    byte previousIndex = interfaceMenuIndex;
+    interfaceMenuIndex = (interfaceMenuIndex + 1) % 4;
+    renderInterfaceMenu(previousIndex);
+  }
+  if (okClick) {
+    if (interfaceMenuIndex == 0) {
+      interfaceDetail = INTERFACE_MENU;
+      interfaceMenuWorking = menu;
+      displayInterfaceSubmenu(display, menuStyleItems, MENU_STYLE_ITEM_COUNT, interfaceMenuWorking);
+    } else if (interfaceMenuIndex == 1) {
+      submenu = submenu == 0 ? 1 : 0;
+      saveConfig();
+      renderInterfaceMenu();
+    } else if (interfaceMenuIndex == 2) {
+      colorSelectionIndex = colorSelectionIndex == 0 ? 1 : 0;
+      applyColorScheme();
+      saveConfig();
+      renderInterfaceMenu();
+    } else if (interfaceMenuIndex == 3) {
+      currentDetail = SETTINGS_STANDBY;
+      standbySelectionIndex = standbyTimeoutIndex;
+      standbyNeedRedraw = true;
+      renderStandbySetting(standbySelectionIndex);
+    }
+  }
+  if (backClick) {
+    interfaceMenuOpen = false;
+    currentDetail = SETTINGS_NONE;
+    displaySettingsMenu(display, settingsMenuIndex);
   }
 }
 
@@ -289,14 +375,21 @@ void handleSettingsSubmenu() {
 
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
-  bool upPress = isMenuButtonPress(BUTTON_UP, upHeld);
-  bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld);
+  const bool isListSettingsSubmenu =
+    submenu == 1 && currentDetail != SETTINGS_UPDATE && currentDetail != SETTINGS_ABOUT;
+  const unsigned long repeatDelayMs =
+    getInterfaceSubmenuRepeatDelay(isListSettingsSubmenu);
+  bool upPress = isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs);
+  bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs);
   bool upClick = buttonUp.isClick();
   bool downClick = buttonDown.isClick();
   bool okClick = buttonOK.isClick();
   bool backClick = buttonBack.isClick();
 
-  if (currentDetail == SETTINGS_COLOR) {
+  if (currentDetail == SETTINGS_INTERFACE) {
+    handleInterfaceMenu(upPress, downPress, okClick, backClick);
+    return;
+  } else if (currentDetail == SETTINGS_COLOR) {
     handleColorDetail(upClick, downClick, okClick, backClick);
     return;
   } else if (currentDetail == SETTINGS_STANDBY) {
@@ -321,16 +414,10 @@ void handleSettingsSubmenu() {
     displaySettingsMenu(display, settingsMenuIndex, previousIndex);
   }
   if (okClick) {
-    if (settingsMenuIndex == 0) {
-      colorSelectionIndex = colorSelectionIndex == 0 ? 1 : 0;
-      applyColorScheme();
-      saveConfig();
-      displaySettingsMenu(display, settingsMenuIndex);
-    } else {
-      enterSettingsDetail(settingsMenuIndex);
-    }
+    enterSettingsDetail(settingsMenuIndex);
   }
   if (backClick) {
+    interfaceMenuOpen = false;
     returnToMainMenu();
   }
 }

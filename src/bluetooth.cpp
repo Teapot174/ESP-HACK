@@ -1,6 +1,7 @@
 #include "display.h"
 #include <GyverButton.h>
 #include "CONFIG.h"
+#include "misc.h"
 #include <SD.h>
 #include "Explorer.h"
 #include "interface.h"
@@ -727,7 +728,7 @@ static void stopBLE() {
 static const char* badKbExts[] = {".txt"};
 ExplorerEntry badKBFileList[MAX_FILES];
 ExplorerState badKBExplorer;
-ExplorerConfig badKBExplorerCfg = {"/BadKB", badKbExts, 1, true, false, true, true};
+ExplorerConfig badKBExplorerCfg = {"/badkb", badKbExts, 1, true, false, true, true};
 
 static void loadBadKBFileList() {
   if (badKBExplorer.currentDir.length() == 0) {
@@ -764,6 +765,7 @@ BLESpamState bleSpamState = IDLE;
 EBLEPayloadType currentSpamType;
 bool inSpamMenu = false;
 byte spamMenuIndex = 0;
+uint16_t spamIntervalMs = 100;
 static const byte SPAM_MENU_ITEM_COUNT = 5;
 static const char* spamMenuItems[] = {"Apple", "Android", "Samsung", "Xiaomi", "Windows"};
 const byte BLE_SPAM_LOG_LINES = 5;
@@ -785,7 +787,7 @@ const char* getBLESpamHeaderName(const char* spamType) {
 }
 
 void displaySpamMenu(byte menuIndex, int previousIndex = -1) {
-  displayAnimatedMenu(display, spamMenuItems, SPAM_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displayInterfaceSubmenu(display, spamMenuItems, SPAM_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 void clearBLESpamLog() {
@@ -825,6 +827,11 @@ void displayBLESpamHeader(const char* spamType, bool running) {
     display.println(F("Press OK."));
     display.println(F("---------------------"));
   }
+  const int16_t contentY = display.getCursorY();
+  display.setCursor(96, 3);
+  display.print(spamIntervalMs);
+  display.print(F("ms"));
+  display.setCursor(0, contentY);
 }
 
 void displayBLESpamDevice(const char* deviceName) {
@@ -1442,12 +1449,13 @@ void handleBluetoothSubmenu() {
     static MenuButtonState spamUpHeld;
     static MenuButtonState spamDownHeld;
 
-    if (isMenuButtonPress(BUTTON_UP, spamUpHeld)) {
+    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    if (isMenuButtonPress(BUTTON_UP, spamUpHeld, repeatDelayMs)) {
       byte previousIndex = spamMenuIndex;
       spamMenuIndex = (spamMenuIndex - 1 + SPAM_MENU_ITEM_COUNT) % SPAM_MENU_ITEM_COUNT;
       displaySpamMenu(spamMenuIndex, previousIndex);
     }
-    if (isMenuButtonPress(BUTTON_DOWN, spamDownHeld)) {
+    if (isMenuButtonPress(BUTTON_DOWN, spamDownHeld, repeatDelayMs)) {
       byte previousIndex = spamMenuIndex;
       spamMenuIndex = (spamMenuIndex + 1) % SPAM_MENU_ITEM_COUNT;
       displaySpamMenu(spamMenuIndex, previousIndex);
@@ -1461,6 +1469,7 @@ void handleBluetoothSubmenu() {
         case 4: currentSpamType = Microsoft; break;
       }
       bleSpamState = READY;
+      spamIntervalMs = 100;
       displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], false);
       Serial.println(F("[Bluetooth] Ready for BLE spam"));
     }
@@ -1474,12 +1483,13 @@ void handleBluetoothSubmenu() {
       static MenuButtonState upHeld;
       static MenuButtonState downHeld;
 
-      if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+      const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+      if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
         byte previousIndex = bluetoothMenuIndex;
         bluetoothMenuIndex = (bluetoothMenuIndex - 1 + BLUETOOTH_MENU_ITEM_COUNT) % BLUETOOTH_MENU_ITEM_COUNT;
         displayBluetoothMenu(display, bluetoothMenuIndex, previousIndex);
       }
-      if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+      if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
         byte previousIndex = bluetoothMenuIndex;
         bluetoothMenuIndex = (bluetoothMenuIndex + 1) % BLUETOOTH_MENU_ITEM_COUNT;
         displayBluetoothMenu(display, bluetoothMenuIndex, previousIndex);
@@ -1537,6 +1547,20 @@ void handleBluetoothSubmenu() {
       static int deviceIndex = 0;
       static String currentDeviceName = "";
 
+      bool intervalChanged = false;
+      if (buttonUp.isClick()) {
+        spamIntervalMs = min<uint16_t>(500, spamIntervalMs + 50);
+        intervalChanged = true;
+      }
+      if (buttonDown.isClick()) {
+        spamIntervalMs = max<uint16_t>(50, spamIntervalMs - 50);
+        intervalChanged = true;
+      }
+      if (intervalChanged) {
+        displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], bleSpamState == RUNNING);
+        return;
+      }
+
       if (buttonOK.isClick()) {
         if (bleSpamState == READY) {
           bleSpamState = RUNNING;
@@ -1567,12 +1591,12 @@ void handleBluetoothSubmenu() {
       }
 
       if (bleSpamState == RUNNING) {
-        const unsigned long spamInterval = 100; // Spam Interval
+        const unsigned long spamInterval = spamIntervalMs;
 
         if (millis() - lastSpamTime >= spamInterval) {
           switch (currentSpamType) {
             case AppleJuice:
-              currentDeviceName = appleDevices[deviceIndex % appleDevicesCount].name;
+              currentDeviceName = getSpamDeviceName(currentSpamType, deviceIndex);
               break;
             case Google:
               currentDeviceName = devices[deviceIndex % devicesCount].name;
@@ -1581,14 +1605,14 @@ void handleBluetoothSubmenu() {
               currentDeviceName = generateRandomName();
               break;
             case Xiaomi:
-              currentDeviceName = "Xiaomi (stub)";
+              currentDeviceName = getSpamDeviceName(currentSpamType, deviceIndex);
               break;
             case Samsung:
-              currentDeviceName = "Samsung (stub)";
+              currentDeviceName = getSpamDeviceName(currentSpamType, deviceIndex);
               break;
           }
 
-          Spam(currentSpamType);
+          Spam(currentSpamType, deviceIndex);
           displayBLESpamDevice(currentDeviceName.c_str());
 
           deviceIndex++;

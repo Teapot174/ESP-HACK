@@ -59,14 +59,15 @@ struct MenuButtonState {
 };
 
 constexpr unsigned long BUTTON_RELEASE_CLICK_MS = 300;
+constexpr unsigned long DEFAULT_SUBMENU_REPEAT_MS = 90;
+constexpr unsigned long DEFAULT_BUTTON_INITIAL_REPEAT_MS = 250;
 
 void returnToMainMenu();
 
-inline bool isMenuButtonPress(uint8_t pin, MenuButtonState &state) {
+inline bool isMenuButtonPress(uint8_t pin, MenuButtonState &state,
+                              unsigned long repeatDelayMs = DEFAULT_SUBMENU_REPEAT_MS) {
   const bool pressed = digitalRead(pin) == LOW;
   const unsigned long now = millis();
-  const unsigned long initialDelayMs = 250;
-  const unsigned long repeatDelayMs = 90;
 
   if (!pressed) {
     state.wasPressed = false;
@@ -76,7 +77,7 @@ inline bool isMenuButtonPress(uint8_t pin, MenuButtonState &state) {
 
   if (!state.wasPressed) {
     state.wasPressed = true;
-    state.nextRepeatAt = now + initialDelayMs;
+    state.nextRepeatAt = now + DEFAULT_BUTTON_INITIAL_REPEAT_MS;
     return true;
   }
 

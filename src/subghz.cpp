@@ -76,7 +76,7 @@ const BruteProtocol* currentBruteProto = nullptr;
 static const char* subExts[] = {".sub"};
 ExplorerEntry subFileList[MAX_FILES];
 ExplorerState subExplorer;
-ExplorerConfig subExplorerCfg = {"/SubGHz", subExts, 1, true, false, true, true};
+ExplorerConfig subExplorerCfg = {"/subghz", subExts, 1, true, false, true, true};
 int nextSignalIndex = 1;
 bool nextSignalIndexReady = false;
 
@@ -193,7 +193,6 @@ unsigned long rawRecorderLastDraw = 0;
 String rawRecorderLastFile = "";
 String rawRecorderSessionFile = "";
 String rawRecorderStoppedFile = "";
-String loadedRawData = "";
 uint8_t rawRecorderSpectrumVals[52];
 int rawRecorderEdges[RAW_REC_MAX_EDGES];
 int rawRecorderEdgeCount = 0;
@@ -332,6 +331,7 @@ static void enableRcSwitchReceive() {
     return;
   }
 
+  pinMode(cc1101GDO0Pin, INPUT);
   rcswitch.enableReceive(cc1101GDO0Pin);
   rcSwitchReceiveEnabled = true;
 
@@ -375,12 +375,13 @@ void runSubGHz() {
 
     if (menuState == menuMain) {
       byte lastMenuIndex = SUBGHZ_MENU_ITEM_COUNT - 1;
-      if (isMenuButtonPress(BUTTON_UP, upHeld)) {
+      const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+      if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
         byte previousIndex = menuIndex;
         menuIndex = (menuIndex == 0) ? lastMenuIndex : menuIndex - 1;
         OLED_printSubGHzMenu(display, menuIndex, previousIndex);
       }
-      if (isMenuButtonPress(BUTTON_DOWN, downHeld)) {
+      if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
         byte previousIndex = menuIndex;
         menuIndex = (menuIndex == lastMenuIndex) ? 0 : menuIndex + 1;
         OLED_printSubGHzMenu(display, menuIndex, previousIndex);
@@ -407,37 +408,6 @@ void runSubGHz() {
             OLED_printSubGHzMenu(display, menuIndex);
             continue;
           }
-          menuState = menuTransmit;
-          transmitIgnoreOkRelease = false;
-          transmitIgnoreBackRelease = false;
-          ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
-          ExplorerLoad(subExplorer, subExplorerCfg);
-          syncNextSignalIndexFromFiles();
-          ExplorerDraw(subExplorer, display);
-          resetButtonStates();
-        } else if (menuIndex == 2) {
-          menuState = menuAnalyzer;
-          setupCC1101();
-          disableRcSwitchReceive();
-          analyzerInit();
-          analyzerExitRequested = false;
-          resetButtonStates();
-          OLED_printAnalyzer();
-        } else if (menuIndex == 3) {
-          menuState = menuJammer;
-          isJamming = false;
-          resetButtonStates();
-          OLED_printJammer();
-        } else if (menuIndex == 4) {
-          menuState = menuBruteforce;
-          bruteRunning = false;
-          resetButtonStates();
-          OLED_printBruteIntro();
-        } else if (menuIndex == 5) {
-          if (!ensureSDReadyInteractive(true)) {
-            OLED_printSubGHzMenu(display, menuIndex);
-            continue;
-          }
           menuState = menuRawRecorder;
           setupCC1101();
           rawRecorderRunning = false;
@@ -457,6 +427,37 @@ void runSubGHz() {
           resetRawRecorderSpectrum();
           resetButtonStates();
           OLED_printRawRecorder();
+        } else if (menuIndex == 2) {
+          if (!ensureSDReadyInteractive(true)) {
+            OLED_printSubGHzMenu(display, menuIndex);
+            continue;
+          }
+          menuState = menuTransmit;
+          transmitIgnoreOkRelease = false;
+          transmitIgnoreBackRelease = false;
+          ExplorerInit(subExplorer, subFileList, MAX_FILES, subExplorerCfg);
+          ExplorerLoad(subExplorer, subExplorerCfg);
+          syncNextSignalIndexFromFiles();
+          ExplorerDraw(subExplorer, display);
+          resetButtonStates();
+        } else if (menuIndex == 3) {
+          menuState = menuAnalyzer;
+          setupCC1101();
+          disableRcSwitchReceive();
+          analyzerInit();
+          analyzerExitRequested = false;
+          resetButtonStates();
+          OLED_printAnalyzer();
+        } else if (menuIndex == 4) {
+          menuState = menuJammer;
+          isJamming = false;
+          resetButtonStates();
+          OLED_printJammer();
+        } else if (menuIndex == 5) {
+          menuState = menuBruteforce;
+          bruteRunning = false;
+          resetButtonStates();
+          OLED_printBruteIntro();
         }
       }
       if (buttonBack.isClick()) {
@@ -889,6 +890,7 @@ void restoreReceiveMode() {
 
   disableRcSwitchReceive();
   enableRcSwitchReceive();
+  rcswitch.resetAvailable();
 }
 
 void read_rcswitch(tpKeyData* kd) {
@@ -1429,7 +1431,6 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
     return false;
   }
   memset(kd, 0, sizeof(tpKeyData));
-  loadedRawData = "";
   String line;
   while (file.available()) {
     line = file.readStringUntil('\n');
@@ -1473,14 +1474,13 @@ bool loadKeyFromSD(String fileName, tpKeyData* kd) {
     } else if (line.startsWith("RAW_Data:")) {
       String rawLine = line.substring(9);
       rawLine.trim();
-      if (rawLine.length() > 0) {
-        if (loadedRawData.length() > 0) loadedRawData += "\n";
-        loadedRawData += rawLine;
-      }
       strncpy(kd->rawData, rawLine.c_str(), sizeof(kd->rawData) - 1);
       kd->rawData[sizeof(kd->rawData) - 1] = '\0';
       kd->type = kLINEAR;
       kd->codeLenth = 1;
+      // RAW is transmitted directly from SD; do not load the whole file
+      // into a String while opening file information.
+      break;
     }
   }
   file.close();
@@ -1649,6 +1649,8 @@ void bruteSendCode(uint16_t code) {
   digitalWrite(bruteTxPin, LOW);
 }
 
+static bool rawPlaybackStopRequested();
+
 static bool sendRawBlock(const String& block) {
   String line = block;
   line.trim();
@@ -1659,6 +1661,7 @@ static bool sendRawBlock(const String& block) {
   int startIndex = 0;
 
   while (startIndex < line.length() && count < RAW_REC_MAX_EDGES) {
+    if (rawPlaybackActive && rawPlaybackStopRequested()) return false;
     while (startIndex < line.length() && line[startIndex] == ' ') startIndex++;
     if (startIndex >= line.length()) break;
     int index = line.indexOf(' ', startIndex);
@@ -1695,6 +1698,7 @@ static void updateRawPlaybackStopFromPins() {
     }
   } else if (backDown) {
     rawPlaybackBackWasPressed = true;
+    rawPlaybackStopRequestedFlag = true;
   }
 
   if ((rawPlaybackOkWasPressed && !okDown) ||
@@ -1724,17 +1728,29 @@ void drawRawPlaybackWave(float phase, uint8_t progressPct) {
   display.print(progress);
 
   display.drawRect(10, 13, 108, 37, SH110X_WHITE);
-  const uint8_t midY = 31;
-  int lastX = 12;
-  int lastY = midY + (int)(sinf(phase * 0.18f) * 10.0f);
-  for (uint8_t x = 2; x < 104; x += 2) {
-    float angle = ((float)x + phase) * 0.18f;
-    int y = midY + (int)(sinf(angle) * 10.0f);
-    display.drawLine(lastX, lastY, 12 + x, y, SH110X_WHITE);
-    display.drawLine(lastX, lastY - 1, 12 + x, y - 1, SH110X_WHITE);
-    display.drawLine(lastX, lastY + 1, 12 + x, y + 1, SH110X_WHITE);
-    lastX = 12 + x;
-    lastY = y;
+  static const int8_t rawWaveSin[64] = {
+    0, 3, 6, 9, 12, 16, 19, 22, 25, 28, 31, 34, 37,
+    40, 43, 46, 49, 51, 54, 57, 60, 63, 65, 68, 71, 73,
+    76, 78, 81, 83, 85, 88, 90, 92, 94, 96, 98, 100, 102,
+    104, 106, 107, 109, 111, 112, 113, 115, 116, 117, 118, 120, 121,
+    122, 122, 123, 124, 125, 125, 126, 126, 126, 127, 127, 127
+  };
+
+  auto rawWaveSinValue = [&](uint8_t x) -> int8_t {
+    int8_t value = rawWaveSin[((x & 0x40) ? -x - 1 : x) & 0x3F];
+    return (x & 0x80) ? -value : value;
+  };
+
+  const uint8_t phaseIndex = ((uint32_t)(phase / 9.0f)) % 63;
+  const int8_t amplitude = 11;
+  for (int i = 113; i > 0; i--) {
+    const int x1 = 12 + ((i - 1) * 103) / 112;
+    const int x2 = min(115, 12 + (i * 103) / 112);
+    const int x3 = min(115, 12 + ((i + 1) * 103) / 112);
+    const int y1 = 32 - rawWaveSinValue(i + phaseIndex * 16) / amplitude;
+    const int y2 = 32 + rawWaveSinValue((i + phaseIndex * 16 + 1) * 2) / amplitude;
+    display.drawLine(x1, y1, x2, y2, SH110X_WHITE);
+    display.drawLine(x2, y1, x3, y2, SH110X_WHITE);
   }
 
   const char* label = "Stop";
@@ -1836,7 +1852,12 @@ static void finishRawPlaybackAnimation(uint16_t durationMs) {
 }
 
 static void rawPlaybackDelayMicroseconds(unsigned int durationUs) {
-  delayMicroseconds(durationUs);
+  while (durationUs > 0) {
+    if (rawPlaybackActive && rawPlaybackStopRequested()) return;
+    const unsigned int slice = durationUs > 500 ? 500 : durationUs;
+    delayMicroseconds(slice);
+    durationUs -= slice;
+  }
 }
 
 bool playRawRecorderFile(const String& fileName) {
@@ -1857,27 +1878,15 @@ bool playRawRecorderFile(const String& fileName) {
     return false;
   }
 
+  // RAW uses the GDO0 pin for transmission. Stop the receive interrupt
+  // before switching the CC1101 into TX mode.
+  disableRcSwitchReceive();
+
   rawPlaybackActive = true;
   rawPlaybackIgnoreOkRelease = digitalRead(BUTTON_OK) == LOW;
   rawPlaybackIgnoreBackRelease = digitalRead(BUTTON_BACK) == LOW;
   drawRawPlaybackWave(0, 0);
   startRawPlaybackAnimationTask();
-
-  File countFile = SD.open(fileName, FILE_READ);
-  if (!countFile) {
-    stopRawPlaybackAnimationTask();
-    OLED_printError(F("Open failed"), true);
-    delay(600);
-    return false;
-  }
-
-  int totalBlocks = 0;
-  while (countFile.available()) {
-    String line = countFile.readStringUntil('\n');
-    line.trim();
-    if (line.startsWith("RAW_Data:")) totalBlocks++;
-  }
-  countFile.close();
 
   if (!initRfModule("tx", frequency)) {
     stopRawPlaybackAnimationTask();
@@ -1908,10 +1917,8 @@ bool playRawRecorderFile(const String& fileName) {
   }
 
   int sentBlocks = 0;
-
-  if (totalBlocks <= 0) {
-    finishRawPlaybackAnimation(450);
-  }
+  const uint32_t rawFileSize = rawFile.size();
+  bool foundRawBlock = false;
 
   while (rawFile.available()) {
     if (rawPlaybackStopRequested()) break;
@@ -1922,7 +1929,12 @@ bool playRawRecorderFile(const String& fileName) {
 
     String block = line.substring(9);
     block.trim();
-    float targetPct = (totalBlocks > 0) ? ((float)(sentBlocks + 1) * 100.0f / (float)totalBlocks) : 100.0f;
+    foundRawBlock = true;
+    // File position provides progress without a separate full SD pass.
+    float targetPct = rawFileSize > 0
+        ? ((float)rawFile.position() * 100.0f / (float)rawFileSize)
+        : 100.0f;
+    if (targetPct < 1.0f) targetPct = 1.0f;
     setRawPlaybackTarget(targetPct);
     if (sendRawBlock(block)) {
       sentBlocks++;
@@ -1930,7 +1942,8 @@ bool playRawRecorderFile(const String& fileName) {
   }
   rawFile.close();
 
-  if (!rawPlaybackStopRequestedFlag) {
+  if (!rawPlaybackStopRequestedFlag && foundRawBlock) {
+    setRawPlaybackTarget(100.0f);
     finishRawPlaybackAnimation(180);
   }
 
@@ -1939,7 +1952,7 @@ bool playRawRecorderFile(const String& fileName) {
   deinitRfModule();
   restoreReceiveMode();
 
-  return sentBlocks > 0 || totalBlocks <= 0;
+  return sentBlocks > 0;
 }
 
 
@@ -1962,7 +1975,7 @@ void sendSynthKey(tpKeyData* kd) {
   Serial.print(kd->frequency);
   Serial.println(F(" MHz"));
 
-  String data = (protocol == "RAW" && loadedRawData.length() > 0) ? loadedRawData : String(kd->rawData);
+  String data = String(kd->rawData);
   uint64_t key = 0;
   for (int i = 0; i < 8; i++) {
     key |= ((uint64_t)kd->keyID[i] << ((7 - i) * 8));

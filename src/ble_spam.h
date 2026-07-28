@@ -64,6 +64,7 @@ extern const int appleDevicesCount;
 
 void aj_adv(int ble_choice);
 void ibeacon(const char* DeviceName = "ESP-HACK", const char* BEACON_UUID = "8ec76ea3-6668-48da-9866-75be8bc86f4d", int ManufacturerId = 0x4C00);
-void Spam(EBLEPayloadType type);
+void Spam(EBLEPayloadType type, uint32_t index = 0);
+const char* getSpamDeviceName(EBLEPayloadType type, uint32_t index);
 void generateRandomMac(uint8_t *mac);
-BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type);
+BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type, uint32_t index = 0);

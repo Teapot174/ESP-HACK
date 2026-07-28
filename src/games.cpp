@@ -1896,8 +1896,10 @@ void handleGamesSubmenu() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
   static bool doomExitAwaitRelease = false;
-  const bool upPress = isMenuButtonPress(BUTTON_UP, upHeld);
-  const bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld);
+  const unsigned long repeatDelayMs =
+    getInterfaceSubmenuRepeatDelay(submenu == 1 && gamesState == GAMES_MENU_STATE);
+  const bool upPress = isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs);
+  const bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs);
   const bool okClick = buttonOK.isClick();
   const bool backClick = buttonBack.isClick();
   const bool okHold = buttonOK.isHold();

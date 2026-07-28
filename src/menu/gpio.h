@@ -3,6 +3,7 @@
 
 #include "display.h"
 #include "CONFIG.h"
+#include "interface.h"
 
 #define GPIO_MENU_ITEM_COUNT 3
 static const char* gpioMenuItems[] = {"iButton", "NRF24", "PN532"};
@@ -91,7 +92,7 @@ static const unsigned char PROGMEM image_iButtonDolphinSuccess_bits[] = {
 
 
 inline void displayGPIOMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
-  displayAnimatedMenu(display, gpioMenuItems, GPIO_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displayInterfaceSubmenu(display, gpioMenuItems, GPIO_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif
