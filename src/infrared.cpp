@@ -491,6 +491,82 @@ static int nextInfraredFileIndex() {
   return maxInfraredIndex + 1;
 }
 
+static bool irSignalIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+  const unsigned long initialDelayMs = 250;
+  const unsigned long repeatDelayMs = 250;
+
+  if (!pressed) {
+    state.wasPressed = false;
+    state.nextRepeatAt = 0;
+    return false;
+  }
+
+  if (!state.wasPressed) {
+    state.wasPressed = true;
+    state.nextRepeatAt = now + initialDelayMs;
+    return true;
+  }
+
+  if (now >= state.nextRepeatAt) {
+    state.nextRepeatAt = now + repeatDelayMs;
+    return true;
+  }
+
+  return false;
+}
+
+static bool irSelectedSignalNeedsScroll() {
+  return irSignalCount > 0 && irSignalIndex >= 0 && irSignalIndex < irSignalCount &&
+         irSignalList[irSignalIndex].length() > 20;
+}
+
+static void printIrSignalName(const String& name, int16_t x, int16_t y, bool selected) {
+  static String marqueeText = "";
+  static unsigned long marqueeStartedAt = 0;
+
+  const int visibleChars = 20;
+  if (!selected || name.length() <= visibleChars) {
+    if (selected) {
+      marqueeText = "";
+      marqueeStartedAt = 0;
+    }
+    display.setCursor(x, y);
+    display.print(name.length() > visibleChars ? name.substring(0, visibleChars) : name);
+    return;
+  }
+
+  if (marqueeText != name) {
+    marqueeText = name;
+    marqueeStartedAt = millis();
+  }
+
+  String marquee = name + F("   ");
+  int maxOffset = marquee.length() - visibleChars;
+  if (maxOffset < 0) maxOffset = 0;
+
+  int offset = 0;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - marqueeStartedAt;
+  if (maxOffset > 0 && elapsed >= initialPauseMs) {
+    unsigned long scrollDuration = static_cast<unsigned long>(maxOffset) * stepMs;
+    unsigned long cycleDuration = scrollDuration + loopPauseMs + scrollDuration + loopPauseMs;
+    unsigned long cyclePosition = (elapsed - initialPauseMs) % cycleDuration;
+    if (cyclePosition < scrollDuration) {
+      offset = cyclePosition / stepMs;
+    } else if (cyclePosition < scrollDuration + loopPauseMs) {
+      offset = maxOffset;
+    } else if (cyclePosition < scrollDuration + loopPauseMs + scrollDuration) {
+      offset = maxOffset - ((cyclePosition - scrollDuration - loopPauseMs) / stepMs);
+    }
+  }
+
+  display.setCursor(x, y);
+  display.print(marquee.substring(offset, offset + visibleChars));
+}
 
 void drawSignalSubmenu() {
   display.clearDisplay();
@@ -514,11 +590,15 @@ void drawSignalSubmenu() {
 
   const int perPage = 4;
   int maxStart = (irSignalCount > perPage) ? (irSignalCount - perPage) : 0;
-  int startIndex = irSignalIndex;
+  int startIndex = irSignalIndex - 1;
+  if (startIndex < 0) startIndex = 0;
   if (startIndex > maxStart) startIndex = maxStart;
-  for (int i = 0; i < perPage; i++) {
+
+  int itemsToShow = irSignalCount - startIndex;
+  if (itemsToShow > perPage) itemsToShow = perPage;
+
+  for (int i = 0; i < itemsToShow; i++) {
     int idx = startIndex + i;
-    if (idx >= irSignalCount) break;
     const int signalY = (i + 2) * 11 - 2;
     display.setCursor(3, signalY);
     if (idx == irSignalIndex) {
@@ -527,9 +607,7 @@ void drawSignalSubmenu() {
     } else {
       display.setTextColor(SH110X_WHITE);
     }
-    String signalName = irSignalList[idx];
-    if (signalName.length() > 16) signalName = signalName.substring(0, 16);
-    display.print(signalName);
+    printIrSignalName(irSignalList[idx], 3, signalY, idx == irSignalIndex);
   }
   display.display();
 }
@@ -961,6 +1039,8 @@ bool saveIRSignal() {
 void handleIRSubmenu() {
   static bool irInitialized = false;
   static unsigned long sendStartTime = 0;
+  static MenuButtonState signalUpHeld;
+  static MenuButtonState signalDownHeld;
 
   if (!irInitialized) {
     initIR();
@@ -973,10 +1053,10 @@ void handleIRSubmenu() {
     buttonDown.setTimeout(500);
     buttonOK.setTimeout(500);
     buttonBack.setTimeout(500);
-    buttonUp.setClickTimeout(300);
-    buttonDown.setClickTimeout(300);
-    buttonOK.setClickTimeout(300);
-    buttonBack.setClickTimeout(300);
+    buttonUp.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
+    buttonDown.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
+    buttonOK.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
+    buttonBack.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
     buttonUp.setStepTimeout(200);
     buttonDown.setStepTimeout(200);
     buttonOK.setStepTimeout(200);
@@ -1155,15 +1235,24 @@ void handleIRSubmenu() {
     }
   } else if (state == IR_SIGNAL_SUBMENU) {
     static int lastSignalIndex = -1;
+    static unsigned long lastSignalMarqueeDrawAt = 0;
     if (irSignalIndex != lastSignalIndex) {
       drawSignalSubmenu();
       lastSignalIndex = irSignalIndex;
+      lastSignalMarqueeDrawAt = millis();
     }
-    if (buttonUp.isClick()) {
+    const bool signalUpPress = irSignalIsNavButtonPress(BUTTON_UP, signalUpHeld) && irSignalCount > 0;
+    const bool signalDownPress = irSignalIsNavButtonPress(BUTTON_DOWN, signalDownHeld) && irSignalCount > 0;
+    if (signalUpPress) {
       irSignalIndex = (irSignalIndex == 0) ? (irSignalCount - 1) : irSignalIndex - 1;
     }
-    if (buttonDown.isClick()) {
+    if (signalDownPress) {
       irSignalIndex = (irSignalIndex == irSignalCount - 1) ? 0 : irSignalIndex + 1;
+    }
+    if (!signalUpPress && !signalDownPress && irSelectedSignalNeedsScroll() &&
+        millis() - lastSignalMarqueeDrawAt >= 200) {
+      lastSignalMarqueeDrawAt = millis();
+      drawSignalSubmenu();
     }
     if (buttonOK.isClick() && irSignalCount > 0) {
       irSelectedSignal = irSignalList[irSignalIndex];

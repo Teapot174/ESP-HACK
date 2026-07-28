@@ -8,9 +8,7 @@
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEAdvertising.h>
-#include <array>
 #include <atomic>
-#include <freertos/FreeRTOS.h>
 #include "menu/bluetooth.h"
 #include "ble_spam.h"
 #include "menu/subghz.h"
@@ -230,6 +228,122 @@ static inline void _bb_hidRelease() {
   _bb_hidSend(rpt);
 }
 
+struct BluetoothReleaseButtonState {
+  bool wasPressed = false;
+  unsigned long pressedAt = 0;
+};
+
+static bool bluetoothButtonReleasedWithin(uint8_t pin, BluetoothReleaseButtonState& state,
+                                          unsigned long maxPressMs = BUTTON_RELEASE_CLICK_MS) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+
+  if (pressed) {
+    if (!state.wasPressed) {
+      state.wasPressed = true;
+      state.pressedAt = now;
+    }
+    return false;
+  }
+
+  if (state.wasPressed) {
+    const bool releasedInTime = now - state.pressedAt <= maxPressMs;
+    state.wasPressed = false;
+    state.pressedAt = 0;
+    return releasedInTime;
+  }
+
+  return false;
+}
+
+static int badKbVisibleLogRows(DisplayType& display) {
+  return (display.height() - 20) / 10;
+}
+
+static int badKbLastLogTop(const std::vector<String>& logs, DisplayType& display) {
+  const int visibleRows = badKbVisibleLogRows(display);
+  return logs.size() > static_cast<size_t>(visibleRows) ? logs.size() - visibleRows : 0;
+}
+
+static bool badKbIsLogNavPress(uint8_t pin, MenuButtonState& state) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+  const unsigned long initialDelayMs = 100;
+  const unsigned long repeatDelayMs = 100;
+
+  if (!pressed) {
+    state.wasPressed = false;
+    state.nextRepeatAt = 0;
+    return false;
+  }
+
+  if (!state.wasPressed) {
+    state.wasPressed = true;
+    state.nextRepeatAt = now + initialDelayMs;
+    return true;
+  }
+
+  if (now >= state.nextRepeatAt) {
+    state.nextRepeatAt = now + repeatDelayMs;
+    return true;
+  }
+
+  return false;
+}
+
+static bool badKbPumpExecInput(const String& filename, std::vector<String>& logs, DisplayType& display,
+                               int& logTop, bool& followTail, BluetoothReleaseButtonState& backState,
+                               MenuButtonState& upState, MenuButtonState& downState) {
+  buttonUp.tick();
+  buttonDown.tick();
+  buttonOK.tick();
+  buttonBack.tick();
+
+  if (badKbIsLogNavPress(BUTTON_UP, upState) && logTop > 0) {
+    logTop--;
+    followTail = false;
+    displayBadKBScriptExec(display, filename, logs, logTop);
+  }
+  if (badKbIsLogNavPress(BUTTON_DOWN, downState)) {
+    const int lastTop = badKbLastLogTop(logs, display);
+    if (logTop < lastTop) {
+      logTop++;
+      followTail = logTop >= lastTop;
+      displayBadKBScriptExec(display, filename, logs, logTop);
+    } else {
+      followTail = true;
+    }
+  }
+  if (bluetoothButtonReleasedWithin(BUTTON_BACK, backState)) {
+    _bb_hidRelease();
+    return false;
+  }
+  return true;
+}
+
+static bool badKbResponsiveDelay(unsigned long delayMs, const String& filename, std::vector<String>& logs,
+                                 DisplayType& display, int& logTop, bool& followTail,
+                                 BluetoothReleaseButtonState& backState,
+                                 MenuButtonState& upState, MenuButtonState& downState) {
+  const unsigned long startedAt = millis();
+  while (millis() - startedAt < delayMs) {
+    if (!badKbPumpExecInput(filename, logs, display, logTop, followTail, backState, upState, downState)) {
+      return false;
+    }
+    delay(1);
+  }
+  return true;
+}
+
+static void badKbAppendExecLog(const String& filename, std::vector<String>& logs, DisplayType& display,
+                               int& logTop, bool& followTail, const String& line) {
+  logs.push_back(line);
+  if (followTail) {
+    logTop = badKbLastLogTop(logs, display);
+  }
+  displayBadKBScriptExec(display, filename, logs, logTop);
+}
+
 static inline void _bm_sendMouseReport(int8_t x, int8_t y, uint8_t buttons = 0) {
   if (!gMouseInput || !hasBleSubscribers(gMouseSubscribers)) return;
   MouseReport report = {buttons, x, y, 0};
@@ -299,15 +413,18 @@ static bool _bb_asciiToHID(char c, uint8_t &key, uint8_t &mod) {
   return false;
 }
 
-static void _bb_sendText(const String& s) {
+static bool _bb_sendText(const String& s, const String& filename, std::vector<String>& logs, DisplayType& display,
+                         int& logTop, bool& followTail, BluetoothReleaseButtonState& backState,
+                         MenuButtonState& upState, MenuButtonState& downState) {
   for (size_t i = 0; i < s.length(); ++i) {
     uint8_t key, mod;
     if (!_bb_asciiToHID(s[i], key, mod)) continue;
     _bb_hidPress(mod, key);
-    delay(8);
+    if (!badKbResponsiveDelay(8, filename, logs, display, logTop, followTail, backState, upState, downState)) return false;
     _bb_hidRelease();
-    delay(8);
+    if (!badKbResponsiveDelay(8, filename, logs, display, logTop, followTail, backState, upState, downState)) return false;
   }
+  return true;
 }
 
 // DuckyScript parser
@@ -318,64 +435,99 @@ static int _bb_parseDelay(const String& s) {
   return (int)v;
 }
 
-static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, DisplayType &display) {
+static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, DisplayType &display,
+                               int& logTop, bool& followTail, BluetoothReleaseButtonState& backState,
+                               MenuButtonState& upState, MenuButtonState& downState,
+                               bool& aborted) {
+  String filenameString(filename);
+  aborted = false;
   if (!gServer || !gKeyboardInput) {
-    logs.push_back("BLE not initialized");
+    badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "BLE not initialized");
     Serial.println("[BadKB] BLE not initialized");
-    displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
     return false;
   }
   if (!hasBleSubscribers(gKeyboardSubscribers)) {
-    logs.push_back("No BLE keyboard");
+    badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "No BLE keyboard");
     Serial.println("[BadKB] No BLE keyboard subscription");
-    displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
     return false;
   }
 
   File file = SD.open(filename, FILE_READ);
   if (!file) {
-    logs.push_back("File not found");
+    badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "File not found");
     Serial.printf("[BadKB] Failed to open file: %s\n", filename);
-    displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
     return false;
   }
 
   while (file.available()) {
+    if (!badKbPumpExecInput(filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+      aborted = true;
+      file.close();
+      return false;
+    }
+
     String line = file.readStringUntil('\n');
     line.trim();
     if (line.length() == 0) continue;
 
-    logs.push_back(line);
+    badKbAppendExecLog(filenameString, logs, display, logTop, followTail, line);
     Serial.printf("[BadKB] Executing: %s\n", line.c_str());
-    displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
 
     if (line.startsWith("REM")) { continue; }
 
     if (line.startsWith("DELAY ")) {
       int ms = _bb_parseDelay(line.substring(6));
       Serial.printf("[BadKB] Delaying %d ms\n", ms);
-      delay(ms);
+      if (!badKbResponsiveDelay(ms, filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+        aborted = true;
+        file.close();
+        return false;
+      }
       continue;
     }
 
     if (line.equalsIgnoreCase("ENTER")) {
       Serial.println("[BadKB] Sending ENTER");
-      _bb_hidPress(0x00, 0x28); delay(25); _bb_hidRelease();
-      delay(6);
+      _bb_hidPress(0x00, 0x28);
+      if (!badKbResponsiveDelay(25, filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+        aborted = true;
+        file.close();
+        return false;
+      }
+      _bb_hidRelease();
+      if (!badKbResponsiveDelay(6, filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+        aborted = true;
+        file.close();
+        return false;
+      }
       continue;
     }
 
     if (line.equalsIgnoreCase("GUI R") || line.equalsIgnoreCase("GUI r") || line.equalsIgnoreCase("WINR")) {
       Serial.println("[BadKB] Sending GUI+R");
-      _bb_hidPress(0x08, 0x15); delay(30); _bb_hidRelease();
-      delay(60);
+      _bb_hidPress(0x08, 0x15);
+      if (!badKbResponsiveDelay(30, filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+        aborted = true;
+        file.close();
+        return false;
+      }
+      _bb_hidRelease();
+      if (!badKbResponsiveDelay(60, filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+        aborted = true;
+        file.close();
+        return false;
+      }
       continue;
     }
 
     if (line.startsWith("STRING ")) {
       String text = line.substring(7);
       Serial.printf("[BadKB] Sending STRING: %s\n", text.c_str());
-      _bb_sendText(text);
+      if (!_bb_sendText(text, filenameString, logs, display, logTop, followTail, backState, upState, downState)) {
+        aborted = true;
+        file.close();
+        return false;
+      }
       continue;
     }
 
@@ -384,8 +536,7 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
 
   file.close();
   Serial.println("[BadKB] Script execution completed");
-  logs.push_back("Done");
-  displayBadKBScriptExec(display, filename, logs, logs.size() > 4 ? logs.size() - 4 : 0);
+  badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "Done");
   return true;
 }
 
@@ -611,6 +762,10 @@ void displayBadKBScriptExec(DisplayType &display, const String& filename, const 
 enum BLESpamState { IDLE, READY, RUNNING };
 BLESpamState bleSpamState = IDLE;
 EBLEPayloadType currentSpamType;
+bool inSpamMenu = false;
+byte spamMenuIndex = 0;
+static const byte SPAM_MENU_ITEM_COUNT = 5;
+static const char* spamMenuItems[] = {"Apple", "Android", "Samsung", "Xiaomi", "Windows"};
 const byte BLE_SPAM_LOG_LINES = 5;
 String bleSpamLog[BLE_SPAM_LOG_LINES];
 byte bleSpamLogSize = 0;
@@ -626,10 +781,11 @@ String generateRandomName() {
 }
 
 const char* getBLESpamHeaderName(const char* spamType) {
-  if (strcmp(spamType, "IOS-SPM") == 0) return "IOS-SPAM";
-  if (strcmp(spamType, "ANDR-SPM") == 0) return "ANDROID-SPAM";
-  if (strcmp(spamType, "WIN-SPM") == 0) return "WINDOWS-SPAM";
   return spamType;
+}
+
+void displaySpamMenu(byte menuIndex, int previousIndex = -1) {
+  displayAnimatedMenu(display, spamMenuItems, SPAM_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 void clearBLESpamLog() {
@@ -673,7 +829,7 @@ void displayBLESpamHeader(const char* spamType, bool running) {
 
 void displayBLESpamDevice(const char* deviceName) {
   pushBLESpamLog(deviceName);
-  displayBLESpamHeader(bluetoothMenuItems[bluetoothMenuIndex], true);
+  displayBLESpamHeader(spamMenuItems[spamMenuIndex], true);
   int16_t startY = display.getCursorY();
   for (byte i = 0; i < bleSpamLogSize; i++) {
     display.setCursor(1, startY + i * 9);
@@ -829,12 +985,16 @@ void handleBluetoothSubmenu() {
   static bool explorerLoaded = false;
   static std::vector<String> execLogs;
   static int execLogTop = 0;
+  static bool execFollowTail = true;
   static bool scriptRunning = false;
   static bool scriptDone = false;
   static String selectedFile = "";
   static bool waitingForConnection = false;
   static uint32_t waitStartTime = 0;
   static bool justEnteredBadBLE = false;
+  static BluetoothReleaseButtonState badBleBackReleaseState;
+  static MenuButtonState badBleLogUpState;
+  static MenuButtonState badBleLogDownState;
   static bool inMouseMenu = false;
   static bool mouseRunning = false;
   static uint8_t mouseSelection = 0;
@@ -849,9 +1009,18 @@ void handleBluetoothSubmenu() {
   static bool lastMouseReady = false;
   static bool mousePairingStarted = false;
   static bool mouseIgnoreButtonsUntilRelease = false;
+  bool scriptWasRunningThisPass = false;
+
+  auto resetBadBleInputStates = [&]() {
+    badBleBackReleaseState = {};
+    resetMenuButtonState(badBleLogUpState);
+    resetMenuButtonState(badBleLogDownState);
+    resetButtonStates();
+  };
 
   if (inBadBLE) {
     if (scriptSelected) {
+      scriptWasRunningThisPass = scriptRunning;
       if (scriptRunning) {
         ensureBleHidInited(BLE_HID_KEYBOARD);
         startBleAdvertisingIfCapacity();
@@ -860,33 +1029,117 @@ void handleBluetoothSubmenu() {
           waitingForConnection = true;
           waitStartTime = millis();
           execLogs.clear();
-          execLogs.push_back("Waiting for BLE...");
-          displayBadKBScriptExec(display, selectedFile, execLogs, 0);
+          execLogTop = 0;
+          execFollowTail = true;
+          badKbAppendExecLog(selectedFile, execLogs, display, execLogTop, execFollowTail, "Waiting for BLE...");
         }
 
         const uint32_t connectionTimeout = 30000;
+        if (!hasBleSubscribers(gKeyboardSubscribers) &&
+            !badKbPumpExecInput(selectedFile, execLogs, display, execLogTop,
+                                execFollowTail, badBleBackReleaseState,
+                                badBleLogUpState, badBleLogDownState)) {
+          scriptSelected = false;
+          scriptRunning = false;
+          scriptDone = false;
+          waitingForConnection = false;
+          waitStartTime = 0;
+          execLogs.clear();
+          execLogTop = 0;
+          execFollowTail = true;
+          resetBadBleInputStates();
+          if (gAdv && gAdv->isAdvertising()) {
+            gAdv->stop();
+          }
+          ExplorerInit(badKBExplorer, badKBFileList, MAX_FILES, badKBExplorerCfg);
+          loadBadKBFileList();
+          explorerLoaded = true;
+          drawBadKBExplorer(display);
+          return;
+        }
         if (hasBleSubscribers(gKeyboardSubscribers)) {
           waitingForConnection = false;
           waitStartTime = 0;
-          delay(3000);
+          if (!badKbResponsiveDelay(3000, selectedFile, execLogs, display, execLogTop,
+                                    execFollowTail, badBleBackReleaseState,
+                                    badBleLogUpState, badBleLogDownState)) {
+            scriptSelected = false;
+            scriptRunning = false;
+            scriptDone = false;
+            waitingForConnection = false;
+            waitStartTime = 0;
+            execLogs.clear();
+            execLogTop = 0;
+            execFollowTail = true;
+            resetBadBleInputStates();
+            if (gAdv && gAdv->isAdvertising()) {
+              gAdv->stop();
+            }
+            ExplorerInit(badKBExplorer, badKBFileList, MAX_FILES, badKBExplorerCfg);
+            loadBadKBFileList();
+            explorerLoaded = true;
+            drawBadKBExplorer(display);
+            return;
+          }
           _bb_hidRelease();
-          delay(40);
+          if (!badKbResponsiveDelay(40, selectedFile, execLogs, display, execLogTop,
+                                    execFollowTail, badBleBackReleaseState,
+                                    badBleLogUpState, badBleLogDownState)) {
+            scriptSelected = false;
+            scriptRunning = false;
+            scriptDone = false;
+            waitingForConnection = false;
+            waitStartTime = 0;
+            execLogs.clear();
+            execLogTop = 0;
+            execFollowTail = true;
+            resetBadBleInputStates();
+            ExplorerInit(badKBExplorer, badKBFileList, MAX_FILES, badKBExplorerCfg);
+            loadBadKBFileList();
+            explorerLoaded = true;
+            drawBadKBExplorer(display);
+            return;
+          }
           execLogs.clear();
-          bool ok = _bb_runDuckyScript(selectedFile.c_str(), execLogs, display);
+          execLogTop = 0;
+          execFollowTail = true;
+          bool scriptAborted = false;
+          bool ok = _bb_runDuckyScript(selectedFile.c_str(), execLogs, display, execLogTop,
+                                       execFollowTail, badBleBackReleaseState,
+                                       badBleLogUpState, badBleLogDownState, scriptAborted);
+          if (scriptAborted) {
+            scriptSelected = false;
+            scriptRunning = false;
+            scriptDone = false;
+            waitingForConnection = false;
+            waitStartTime = 0;
+            execLogs.clear();
+            execLogTop = 0;
+            execFollowTail = true;
+            resetBadBleInputStates();
+            ExplorerInit(badKBExplorer, badKBFileList, MAX_FILES, badKBExplorerCfg);
+            loadBadKBFileList();
+            explorerLoaded = true;
+            drawBadKBExplorer(display);
+            return;
+          }
           scriptRunning = false;
           scriptDone = true;
           if (!ok) {
-            execLogs.push_back("Failed");
+            badKbAppendExecLog(selectedFile, execLogs, display, execLogTop, execFollowTail, "Failed");
           }
-          displayBadKBScriptExec(display, selectedFile, execLogs, execLogs.size() > 4 ? execLogs.size() - 4 : 0);
+          displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
+          resetBadBleInputStates();
         } else if (millis() - waitStartTime >= connectionTimeout) {
           waitingForConnection = false;
           waitStartTime = 0;
           scriptRunning = false;
           scriptDone = true;
           execLogs.clear();
-          execLogs.push_back("Connection timeout");
-          displayBadKBScriptExec(display, selectedFile, execLogs, 0);
+          execLogTop = 0;
+          execFollowTail = true;
+          badKbAppendExecLog(selectedFile, execLogs, display, execLogTop, execFollowTail, "Connection timeout");
+          resetBadBleInputStates();
           Serial.println("[BadKB] Connection timeout");
         }
       } else {
@@ -912,24 +1165,33 @@ void handleBluetoothSubmenu() {
       startBleAdvertisingIfCapacity();
     }
   } else {
-    if (bleSpamState == IDLE) {
+    if (inSpamMenu && bleSpamState == IDLE) {
+      displaySpamMenu(spamMenuIndex);
+    } else if (inSpamMenu && bleSpamState == READY) {
+      displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], false);
+    } else if (bleSpamState == IDLE) {
       displayBluetoothMenu(display, bluetoothMenuIndex);
     } else if (bleSpamState == READY) {
-      displayFullBLESpamScreen(bluetoothMenuItems[bluetoothMenuIndex], false);
+      displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], false);
     }
   }
 
   if (inBadBLE) {
     if (scriptSelected) {
-      if (buttonUp.isClick() && execLogTop > 0) {
+      if (badKbIsLogNavPress(BUTTON_UP, badBleLogUpState) && execLogTop > 0) {
         execLogTop--;
+        execFollowTail = false;
         displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
       }
-      if (buttonDown.isClick() && execLogTop + ((display.height() - 20) / 10) < (int)execLogs.size()) {
+      bool downLogClick = badKbIsLogNavPress(BUTTON_DOWN, badBleLogDownState);
+      if (downLogClick && execLogTop + ((display.height() - 20) / 10) < (int)execLogs.size()) {
         execLogTop++;
+        execFollowTail = execLogTop >= badKbLastLogTop(execLogs, display);
         displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
+      } else if (downLogClick) {
+        execFollowTail = true;
       }
-      if (buttonBack.isClick()) {
+      if (bluetoothButtonReleasedWithin(BUTTON_BACK, badBleBackReleaseState)) {
         scriptSelected = false;
         scriptRunning = false;
         scriptDone = false;
@@ -937,6 +1199,8 @@ void handleBluetoothSubmenu() {
         waitStartTime = 0;
         execLogs.clear();
         execLogTop = 0;
+        execFollowTail = true;
+        resetBadBleInputStates();
         if (gAdv && gAdv->isAdvertising()) {
           gAdv->stop();
         }
@@ -944,16 +1208,19 @@ void handleBluetoothSubmenu() {
         loadBadKBFileList();
         explorerLoaded = true;
         drawBadKBExplorer(display);
+        return;
       }
-      if (buttonOK.isClick() && scriptDone) {
+      if (!scriptWasRunningThisPass && buttonOK.isClick() && scriptDone) {
         scriptRunning = true;
         scriptDone = false;
         waitingForConnection = false;
         waitStartTime = 0;
+        execLogTop = 0;
+        execFollowTail = true;
       }
     } else {
-      bool backClick = buttonBack.isClick();
-      if (justEnteredBadBLE) backClick = false;
+      bool backRelease = bluetoothButtonReleasedWithin(BUTTON_BACK, badBleBackReleaseState);
+      if (justEnteredBadBLE) backRelease = false;
       ExplorerAction action = ExplorerHandle(
         badKBExplorer,
         badKBExplorerCfg,
@@ -961,7 +1228,7 @@ void handleBluetoothSubmenu() {
         buttonUp.isClick(),
         buttonDown.isClick(),
         buttonOK.isClick(),
-        backClick,
+        backRelease,
         buttonBack.isHold()
       );
       if (action == EXPLORER_SELECT_FILE) {
@@ -973,6 +1240,7 @@ void handleBluetoothSubmenu() {
         waitStartTime = 0;
         execLogs.clear();
         execLogTop = 0;
+        execFollowTail = true;
         ensureBleHidInited(BLE_HID_KEYBOARD);
         displayBadKBScriptExec(display, selectedFile, execLogs, execLogTop);
         Serial.println(F("[BadKB] Selected BadKB script"));
@@ -980,7 +1248,15 @@ void handleBluetoothSubmenu() {
         inBadBLE = false;
         explorerLoaded = false;
         justEnteredBadBLE = false;
+        scriptSelected = false;
+        scriptRunning = false;
+        scriptDone = false;
+        waitingForConnection = false;
         waitStartTime = 0;
+        execLogs.clear();
+        execLogTop = 0;
+        execFollowTail = true;
+        resetBadBleInputStates();
         pauseBLE();
         display.clearDisplay();
         displayBluetoothMenu(display, bluetoothMenuIndex);
@@ -1162,6 +1438,37 @@ void handleBluetoothSubmenu() {
         mouseLastStep = millis();
       }
     }
+  } else if (inSpamMenu && bleSpamState == IDLE) {
+    static MenuButtonState spamUpHeld;
+    static MenuButtonState spamDownHeld;
+
+    if (isMenuButtonPress(BUTTON_UP, spamUpHeld)) {
+      byte previousIndex = spamMenuIndex;
+      spamMenuIndex = (spamMenuIndex - 1 + SPAM_MENU_ITEM_COUNT) % SPAM_MENU_ITEM_COUNT;
+      displaySpamMenu(spamMenuIndex, previousIndex);
+    }
+    if (isMenuButtonPress(BUTTON_DOWN, spamDownHeld)) {
+      byte previousIndex = spamMenuIndex;
+      spamMenuIndex = (spamMenuIndex + 1) % SPAM_MENU_ITEM_COUNT;
+      displaySpamMenu(spamMenuIndex, previousIndex);
+    }
+    if (buttonOK.isClick()) {
+      switch (spamMenuIndex) {
+        case 0: currentSpamType = AppleJuice; break;
+        case 1: currentSpamType = Google; break;
+        case 2: currentSpamType = Samsung; break;
+        case 3: currentSpamType = Xiaomi; break;
+        case 4: currentSpamType = Microsoft; break;
+      }
+      bleSpamState = READY;
+      displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], false);
+      Serial.println(F("[Bluetooth] Ready for BLE spam"));
+    }
+    if (buttonBack.isClick()) {
+      inSpamMenu = false;
+      spamMenuIndex = 0;
+      displayBluetoothMenu(display, bluetoothMenuIndex);
+    }
   } else {
     if (bleSpamState == IDLE) {
       static MenuButtonState upHeld;
@@ -1178,7 +1485,7 @@ void handleBluetoothSubmenu() {
         displayBluetoothMenu(display, bluetoothMenuIndex, previousIndex);
       }
       if (buttonOK.isClick()) {
-        if (bluetoothMenuIndex == 3) {
+        if (bluetoothMenuIndex == 1) {
           if (!ensureSDReadyInteractive(true)) {
             displayBluetoothMenu(display, bluetoothMenuIndex);
             return;
@@ -1187,10 +1494,18 @@ void handleBluetoothSubmenu() {
           inMouseMenu = false;
           explorerLoaded = false;
           justEnteredBadBLE = true;
+          scriptSelected = false;
+          scriptRunning = false;
+          scriptDone = false;
+          waitingForConnection = false;
+          execLogs.clear();
+          execLogTop = 0;
+          execFollowTail = true;
+          resetBadBleInputStates();
           waitStartTime = 0;
           ensureBleHidInited(BLE_HID_KEYBOARD);
           Serial.println(F("[BadKB] Entered BadKB"));
-        } else if (bluetoothMenuIndex == 4) {
+        } else if (bluetoothMenuIndex == 2) {
           inMouseMenu = true;
           inBadBLE = false;
           explorerLoaded = false;
@@ -1203,24 +1518,21 @@ void handleBluetoothSubmenu() {
           displayMousePairScreen(false, false, "");
           Serial.println(F("[Mouse] Entered Mouse menu"));
         } else {
-          bleSpamState = READY;
-          switch (bluetoothMenuIndex) {
-            case 0: currentSpamType = AppleJuice; break;
-            case 1: currentSpamType = Google; break;
-            case 2: currentSpamType = Microsoft; break;
-          }
-          displayFullBLESpamScreen(bluetoothMenuItems[bluetoothMenuIndex], false);
-          Serial.println(F("[Bluetooth] Ready for BLE spam"));
+          inSpamMenu = true;
+          spamMenuIndex = 0;
+          displaySpamMenu(spamMenuIndex);
+          Serial.println(F("[Bluetooth] Entered Spam menu"));
         }
       }
       if (buttonBack.isClick()) {
         inMouseMenu = false;
         bluetoothMenuIndex = 0;
+        inSpamMenu = false;
         display.clearDisplay();
         returnToMainMenu();
         display.display();
       }
-    } else if (bleSpamState == READY || bleSpamState == RUNNING) {
+    } else if (inSpamMenu && (bleSpamState == READY || bleSpamState == RUNNING)) {
       static unsigned long lastSpamTime = 0;
       static int deviceIndex = 0;
       static String currentDeviceName = "";
@@ -1241,7 +1553,7 @@ void handleBluetoothSubmenu() {
           bleSpamState = READY;
           BLEDevice::deinit();
           Serial.println(F("[Bluetooth] Stopped BLE spam"));
-          displayFullBLESpamScreen(bluetoothMenuItems[bluetoothMenuIndex], false);
+          displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], false);
         }
       }
 
@@ -1250,7 +1562,8 @@ void handleBluetoothSubmenu() {
           BLEDevice::deinit();
         }
         bleSpamState = IDLE;
-        displayBluetoothMenu(display, bluetoothMenuIndex);
+        inSpamMenu = true;
+        displaySpamMenu(spamMenuIndex);
       }
 
       if (bleSpamState == RUNNING) {
@@ -1267,9 +1580,15 @@ void handleBluetoothSubmenu() {
             case Microsoft:
               currentDeviceName = generateRandomName();
               break;
+            case Xiaomi:
+              currentDeviceName = "Xiaomi (stub)";
+              break;
+            case Samsung:
+              currentDeviceName = "Samsung (stub)";
+              break;
           }
 
-          executeSpam(currentSpamType);
+          Spam(currentSpamType);
           displayBLESpamDevice(currentDeviceName.c_str());
 
           deviceIndex++;

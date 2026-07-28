@@ -226,7 +226,11 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
     return AdvData;
 }
 
-void executeSpam(EBLEPayloadType type) {
+void Spam(EBLEPayloadType type) {
+    if (type == Xiaomi || type == Samsung) {
+        return;
+    }
+
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     if (!pAdvertising) {
         return;

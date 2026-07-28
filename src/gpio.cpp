@@ -689,6 +689,20 @@ String formatIButtonCode(const byte* data) {
   return String(code);
 }
 
+String getIButtonTypeName(byte type) {
+  switch (type) {
+    case 0x01: return F("DS1990/DS2401");
+    case 0x81: return F("DS1990A/RW1990");
+    default: {
+      String st = F("Unknown 0x");
+      if (type < 0x10) st += "0";
+      st += String(type, HEX);
+      st.toUpperCase();
+      return st;
+    }
+  }
+}
+
 void initIButtonWire() {
   byte pin = iButtonPins[iButtonPinIndex];
   if (iButtonWire == nullptr || iButtonPin != pin) {
@@ -879,28 +893,30 @@ void displayIButtonWriteWaiting() {
   display.setTextSize(1);
   display.setTextColor(1);
   display.setTextWrap(false);
-  display.setCursor(2, 2);
-  String name = iButtonExplorer.selectedFile.length() > 13 ? iButtonExplorer.selectedFile.substring(0, 13) : iButtonExplorer.selectedFile;
-  display.print("Signal: " + name);
-  display.setCursor(5, 14);
-  display.print("Code:");
-  display.setCursor(5, 26);
-  display.print("Type:");
-  display.setCursor(5, 38);
-  display.print("Bits:");
-  display.setCursor(11, 53);
-  display.print("Waiting iButton...");
 
-  String code = formatIButtonCode(iButtonBuffer);
-  if (code.length() > 15) code = code.substring(0, 15);
-  display.setCursor(35, 14);
-  display.print(code);
-  display.setCursor(35, 26);
-  display.print("0x");
-  if (iButtonType < 0x10) display.print("0");
-  display.print(iButtonType, HEX);
-  display.setCursor(35, 38);
-  display.print(iButtonBits);
+  String name = iButtonExplorer.selectedFile;
+  if (name.length() > 16) name = name.substring(0, 16);
+  display.setCursor(3, 3);
+  display.println("File: " + name);
+  uint8_t dataY = display.getCursorY() + 3;
+
+  String st = "Code: " + formatIButtonCode(iButtonBuffer);
+  display.setCursor(3, dataY);
+  display.println(st);
+  st = "Type: " + getIButtonTypeName(iButtonType);
+  dataY = display.getCursorY() + 2;
+  display.setCursor(3, dataY);
+  display.println(st);
+  st = "Bits: " + String(iButtonBits);
+  dataY = display.getCursorY() + 2;
+  display.setCursor(3, dataY);
+  display.println(st);
+  display.setCursor(3, 54);
+  display.print(F("Pin:"));
+  display.print(iButtonPinNames[iButtonPinIndex]);
+  display.setCursor(67, 54);
+  display.print(F("Writing..."));
+
   display.display();
 }
 
@@ -909,20 +925,45 @@ void displayIButtonEmulating() {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
+
+  String name = iButtonExplorer.selectedFile;
+  if (name.length() > 16) name = name.substring(0, 16);
   display.setCursor(3, 3);
-  display.print(F("Emulating iButton"));
-  display.setCursor(3, 16);
-  display.print(F("Code: "));
+  display.println("File: " + name);
+  uint8_t dataY = display.getCursorY() + 3;
+
   String code = formatIButtonCode(iButtonBuffer);
-  display.print(code.substring(0, 12));
-  display.setCursor(3, 29);
-  display.print(F("Pin: "));
+  display.setCursor(3, dataY);
+  display.println("Code: " + code);
+  String st = "Type: " + getIButtonTypeName(iButtonType);
+  dataY = display.getCursorY() + 2;
+  display.setCursor(3, dataY);
+  display.println(st);
+  st = "Bits: " + String(iButtonBits);
+  dataY = display.getCursorY() + 2;
+  display.setCursor(3, dataY);
+  display.println(st);
+  display.setCursor(3, 54);
+  display.print(F("Pin:"));
   display.print(iButtonPinNames[iButtonPinIndex]);
-  display.setCursor(3, 42);
-  display.print(F("Waiting for reader..."));
-  display.setCursor(3, 55);
-  display.print(F("BACK to stop"));
+  display.setCursor(55, 54);
+  display.print(F("Emulating..."));
   display.display();
+}
+
+void displayIButtonFileError(const __FlashStringHelper* message) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
+  display.setCursor(3, 3);
+  display.print(F("iButton file"));
+  display.setCursor(1, 10);
+  display.println(F("---------------------"));
+  display.setCursor(3, 26);
+  display.print(message);
+  display.display();
+  delay(1000);
 }
 
 void displayGPIOPlaceholder() {
@@ -960,20 +1001,18 @@ bool saveIButtonToSD() {
     Serial.println(filePath);
     return false;
   }
-  file.println(F("Filetype: iButton Key File"));
+  file.println(F("Filetype: Flipper iButton key"));
   file.println(F("Version: 1"));
-  file.print(F("Code: "));
+  file.println(F("# Key type can be Cyfral, Dallas or Metakom"));
+  file.println(F("Key type: Dallas"));
+  file.println(F("# Data size for Cyfral is 2, for Metakom is 4, for Dallas is 8"));
+  file.print(F("Data: "));
   for (int i = 0; i < 8; i++) {
     if (iButtonBuffer[i] < 0x10) file.print("0");
     file.print(iButtonBuffer[i], HEX);
     if (i < 7) file.print(" ");
   }
   file.println();
-  file.print(F("Type: 0x"));
-  if (iButtonType < 0x10) file.print("0");
-  file.println(iButtonType, HEX);
-  file.print(F("Bits: "));
-  file.println(iButtonBits);
   file.close();
   Serial.print(F("Saved iButton to "));
   Serial.println(filePath);
@@ -988,11 +1027,48 @@ bool loadIButtonFromSD(const String& fileName) {
     return false;
   }
   bool hasCode = false;
+  bool flipperFormat = false;
+  bool supportedType = true;
+  String keyType = "";
   String line;
   while (file.available()) {
     line = file.readStringUntil('\n');
     line.trim();
-    if (line.startsWith("Code:") || line.startsWith("Key:")) {
+    if (line.startsWith("#") || line.length() == 0) {
+      continue;
+    }
+    if (line.startsWith("Filetype:")) {
+      String fileType = line.substring(9);
+      fileType.trim();
+      flipperFormat = fileType.equalsIgnoreCase("Flipper iButton key");
+    } else if (line.startsWith("Key type:")) {
+      keyType = line.substring(9);
+      keyType.trim();
+      supportedType = keyType.equalsIgnoreCase("Dallas");
+    } else if (line.startsWith("Data:")) {
+      String dataStr = line.substring(5);
+      dataStr.trim();
+      dataStr.replace(" ", "");
+      dataStr.replace(":", "");
+      if (keyType.length() > 0 && !keyType.equalsIgnoreCase("Dallas")) {
+        supportedType = false;
+        continue;
+      }
+      if (dataStr.length() != 16) {
+        file.close();
+        Serial.print(F("Unsupported iButton data size in "));
+        Serial.println(fileName);
+        return false;
+      }
+      for (int i = 0; i < 8; i++) {
+        String byteStr = dataStr.substring(i * 2, i * 2 + 2);
+        iButtonBuffer[i] = strtol(byteStr.c_str(), nullptr, 16);
+      }
+      iButtonType = iButtonBuffer[0];
+      iButtonBits = 64;
+      iButtonCrcOk = OneWire::crc8(iButtonBuffer, 7) == iButtonBuffer[7];
+      hasCode = true;
+    } else if (line.startsWith("Code:") || line.startsWith("Key:")) {
       String codeStr = line.substring(line.indexOf(':') + 1);
       codeStr.trim();
       codeStr.replace(" ", "");
@@ -1007,6 +1083,7 @@ bool loadIButtonFromSD(const String& fileName) {
       }
       iButtonType = iButtonBuffer[0];
       iButtonBits = 64;
+      iButtonCrcOk = OneWire::crc8(iButtonBuffer, 7) == iButtonBuffer[7];
       hasCode = true;
     } else if (line.startsWith("Type:")) {
       String typeStr = line.substring(5);
@@ -1018,7 +1095,33 @@ bool loadIButtonFromSD(const String& fileName) {
     }
   }
   file.close();
+  if (!supportedType) {
+    Serial.print(F("Unsupported iButton key type"));
+    if (keyType.length() > 0) {
+      Serial.print(F(": "));
+      Serial.print(keyType);
+    }
+    Serial.print(F(" in "));
+    Serial.println(fileName);
+    return false;
+  }
+  if (flipperFormat && keyType.length() == 0) {
+    Serial.print(F("Missing iButton key type in "));
+    Serial.println(fileName);
+  }
   return hasCode;
+}
+
+void resetIButtonInputStates(MenuButtonState& menuUpHeld, MenuButtonState& menuDownHeld,
+                             MenuButtonState& readUpHeld, MenuButtonState& readDownHeld) {
+  buttonUp.resetStates();
+  buttonDown.resetStates();
+  buttonOK.resetStates();
+  buttonBack.resetStates();
+  menuUpHeld = {};
+  menuDownHeld = {};
+  readUpHeld = {};
+  readDownHeld = {};
 }
 
 void handleIButtonSubmenu() {
@@ -1086,6 +1189,7 @@ void handleIButtonSubmenu() {
     }
     if (buttonBack.isClick()) {
       iButtonState = IBUTTON_MENU;
+      resetIButtonInputStates(menuUpHeld, menuDownHeld, readUpHeld, readDownHeld);
       displayIButtonMenu();
       return;
     }
@@ -1117,13 +1221,14 @@ void handleIButtonSubmenu() {
         display.display();
         delay(1000);
       } else {
-        ExplorerShowSDError(display);
+        displayIButtonFileError(F("Save failed"));
       }
       iButtonState = IBUTTON_READ_WAIT;
       displayIButtonReadWaiting();
     }
     if (buttonBack.isClick()) {
       iButtonState = IBUTTON_MENU;
+      resetIButtonInputStates(menuUpHeld, menuDownHeld, readUpHeld, readDownHeld);
       displayIButtonMenu();
     }
     return;
@@ -1147,7 +1252,7 @@ void handleIButtonSubmenu() {
         iButtonState = IBUTTON_WRITE_WAIT;
         displayIButtonWriteWaiting();
       } else {
-        ExplorerShowSDError(display);
+        displayIButtonFileError(F("Unsupported file"));
         ExplorerDraw(iButtonExplorer, display);
       }
     } else if (action == EXPLORER_EXIT) {
@@ -1177,11 +1282,11 @@ void handleIButtonSubmenu() {
           iButtonState = IBUTTON_EMULATE_ACTIVE;
           displayIButtonEmulating();
         } else {
-          ExplorerShowSDError(display);
+          displayIButtonFileError(F("Emulation error"));
           ExplorerDraw(iButtonExplorer, display);
         }
       } else {
-        ExplorerShowSDError(display);
+        displayIButtonFileError(F("Unsupported file"));
         ExplorerDraw(iButtonExplorer, display);
       }
     } else if (action == EXPLORER_EXIT) {

@@ -25,8 +25,6 @@ enum GamesState : byte {
 static GamesState gamesState = GAMES_MENU_STATE;
 
 namespace {
-constexpr unsigned long GAME_RELEASE_CLICK_MS = 700;
-
 struct ReleaseButtonState {
   bool wasPressed;
   unsigned long pressedAt;
@@ -42,7 +40,7 @@ void primeReleaseButtonState(ReleaseButtonState &state, uint8_t pin) {
   state.pressedAt = state.wasPressed ? millis() : 0;
 }
 
-bool buttonReleasedOnceWithin(uint8_t pin, ReleaseButtonState &state, unsigned long maxPressMs = GAME_RELEASE_CLICK_MS) {
+bool buttonReleasedOnceWithin(uint8_t pin, ReleaseButtonState &state, unsigned long maxPressMs = BUTTON_RELEASE_CLICK_MS) {
   const bool pressed = digitalRead(pin) == LOW;
   const unsigned long now = millis();
 

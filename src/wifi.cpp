@@ -27,6 +27,36 @@ static void resetWiFiMenuButtons() {
   buttonBack.resetStates();
 }
 
+struct WiFiReleaseButtonState {
+  bool wasPressed = false;
+  unsigned long pressedAt = 0;
+};
+
+static WiFiReleaseButtonState beaconBackReleaseState;
+
+static bool wifiButtonReleasedWithin(uint8_t pin, WiFiReleaseButtonState& state,
+                                     unsigned long maxPressMs = BUTTON_RELEASE_CLICK_MS) {
+  const bool pressed = digitalRead(pin) == LOW;
+  const unsigned long now = millis();
+
+  if (pressed) {
+    if (!state.wasPressed) {
+      state.wasPressed = true;
+      state.pressedAt = now;
+    }
+    return false;
+  }
+
+  if (state.wasPressed) {
+    const bool releasedInTime = now - state.pressedAt <= maxPressMs;
+    state.wasPressed = false;
+    state.pressedAt = 0;
+    return releasedInTime;
+  }
+
+  return false;
+}
+
 bool inSpamMenu = false, isSpamming = false;
 bool inEvilPortal = false, apRunning = false;
 bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
@@ -601,7 +631,7 @@ void displayPacketsGraph() {
 void beaconSpamList(const char list[]) {
   buttonOK.tick();
   buttonBack.tick();
-  if (buttonBack.isRelease()) {
+  if (wifiButtonReleasedWithin(BUTTON_BACK, beaconBackReleaseState)) {
     stopBeaconSpamAndExit();
     return;
   }
@@ -619,7 +649,7 @@ void beaconSpamList(const char list[]) {
 
   for (uint8_t i = 0; i < beaconSpamFrameCount && isSpamming; i++) {
     buttonBack.tick();
-    if (buttonBack.isRelease()) {
+    if (wifiButtonReleasedWithin(BUTTON_BACK, beaconBackReleaseState)) {
       stopBeaconSpamAndExit();
       return;
     }
@@ -921,9 +951,9 @@ void printWiFiNetworkName(const String &ssid, int16_t x, int16_t y, int16_t maxW
   if (maxOffset < 0) maxOffset = 0;
 
   int offset = 0;
-  const unsigned long initialPauseMs = 1000;
-  const unsigned long loopPauseMs = 500;
-  const unsigned long stepMs = 300;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
   unsigned long elapsed = millis() - marqueeStartedAt;
   if (maxOffset > 0 && elapsed >= initialPauseMs) {
     unsigned long scrollDuration = (maxOffset + 1) * stepMs;

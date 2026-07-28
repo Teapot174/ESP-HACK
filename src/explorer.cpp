@@ -246,6 +246,57 @@ static bool explorerIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
   return false;
 }
 
+static bool explorerSelectedNameNeedsScroll(const ExplorerState& state) {
+  return state.count > 0 && state.index >= 0 && state.index < state.count &&
+         state.list[state.index].name.length() > 20;
+}
+
+static void explorerPrintEntryName(DisplayType& display, const String& name, int16_t x, int16_t y, bool selected) {
+  static String marqueeText = "";
+  static unsigned long marqueeStartedAt = 0;
+
+  const int visibleChars = 20;
+  if (!selected || name.length() <= visibleChars) {
+    if (selected) {
+      marqueeText = "";
+      marqueeStartedAt = 0;
+    }
+    display.setCursor(x, y);
+    display.print(name.length() > visibleChars ? name.substring(0, visibleChars) : name);
+    return;
+  }
+
+  if (marqueeText != name) {
+    marqueeText = name;
+    marqueeStartedAt = millis();
+  }
+
+  String marquee = name + F("   ");
+  int maxOffset = marquee.length() - visibleChars;
+  if (maxOffset < 0) maxOffset = 0;
+
+  int offset = 0;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - marqueeStartedAt;
+  if (maxOffset > 0 && elapsed >= initialPauseMs) {
+    unsigned long scrollDuration = static_cast<unsigned long>(maxOffset) * stepMs;
+    unsigned long cycleDuration = scrollDuration + loopPauseMs + scrollDuration + loopPauseMs;
+    unsigned long cyclePosition = (elapsed - initialPauseMs) % cycleDuration;
+    if (cyclePosition < scrollDuration) {
+      offset = cyclePosition / stepMs;
+    } else if (cyclePosition < scrollDuration + loopPauseMs) {
+      offset = maxOffset;
+    } else if (cyclePosition < scrollDuration + loopPauseMs + scrollDuration) {
+      offset = maxOffset - ((cyclePosition - scrollDuration - loopPauseMs) / stepMs);
+    }
+  }
+
+  display.setCursor(x, y);
+  display.print(marquee.substring(offset, offset + visibleChars));
+}
+
 void ExplorerInit(ExplorerState& state, ExplorerEntry* buffer, int bufferSize, const ExplorerConfig& cfg) {
   state.list = buffer;
   state.maxFiles = bufferSize;
@@ -340,8 +391,6 @@ void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
   const int baseRow = 2;
   for (int i = 0; i < itemsToShow; i++) {
     int idx = startIndex + i;
-    String name = state.list[idx].name;
-    if (name.length() > 18) name = name.substring(0, 18);
 
     int y = (i + baseRow) * 11 - 2;
 
@@ -351,8 +400,7 @@ void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
     } else {
       display.setTextColor(SH110X_WHITE);
     }
-    display.setCursor(3, y);
-    display.println(name);
+    explorerPrintEntryName(display, state.list[idx].name, 3, y, idx == state.index);
   }
   display.display();
 }
@@ -467,13 +515,21 @@ ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, D
 
   const bool upPress = explorerIsNavButtonPress(BUTTON_UP, state.upButtonState);
   const bool downPress = explorerIsNavButtonPress(BUTTON_DOWN, state.downButtonState);
+  static unsigned long lastMarqueeDrawAt = 0;
 
   if (upPress && state.count > 0) {
     state.index = (state.index == 0) ? (state.count - 1) : state.index - 1;
+    lastMarqueeDrawAt = millis();
     ExplorerDraw(state, display);
   }
   if (downPress && state.count > 0) {
     state.index = (state.index == state.count - 1) ? 0 : state.index + 1;
+    lastMarqueeDrawAt = millis();
+    ExplorerDraw(state, display);
+  }
+  if (!upPress && !downPress && explorerSelectedNameNeedsScroll(state) &&
+      millis() - lastMarqueeDrawAt >= 200) {
+    lastMarqueeDrawAt = millis();
     ExplorerDraw(state, display);
   }
   if (okClick && state.count > 0) {

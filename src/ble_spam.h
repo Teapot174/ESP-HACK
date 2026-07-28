@@ -9,7 +9,7 @@
 // Bluetooth max TX
 #define MAX_TX_POWER ESP_PWR_LVL_P9 
 
-enum EBLEPayloadType { Microsoft, SourApple, AppleJuice, Samsung, Google };
+enum EBLEPayloadType { Microsoft, SourApple, AppleJuice, Xiaomi, Samsung, Google };
 
 struct Device {
     const char* name;
@@ -64,6 +64,6 @@ extern const int appleDevicesCount;
 
 void aj_adv(int ble_choice);
 void ibeacon(const char* DeviceName = "ESP-HACK", const char* BEACON_UUID = "8ec76ea3-6668-48da-9866-75be8bc86f4d", int ManufacturerId = 0x4C00);
-void executeSpam(EBLEPayloadType type);
+void Spam(EBLEPayloadType type);
 void generateRandomMac(uint8_t *mac);
 BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type);

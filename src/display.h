@@ -58,6 +58,8 @@ struct MenuButtonState {
   unsigned long nextRepeatAt = 0;
 };
 
+constexpr unsigned long BUTTON_RELEASE_CLICK_MS = 300;
+
 void returnToMainMenu();
 
 inline bool isMenuButtonPress(uint8_t pin, MenuButtonState &state) {

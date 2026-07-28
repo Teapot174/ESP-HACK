@@ -434,19 +434,19 @@ void setup() {
 
   buttonUp.setDebounce(50);
   buttonUp.setTimeout(500);
-  buttonUp.setClickTimeout(300);
+  buttonUp.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
   buttonUp.setStepTimeout(200);
   buttonDown.setDebounce(50);
   buttonDown.setTimeout(500);
-  buttonDown.setClickTimeout(300);
+  buttonDown.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
   buttonDown.setStepTimeout(200);
   buttonOK.setDebounce(50);
   buttonOK.setTimeout(500);
-  buttonOK.setClickTimeout(300);
+  buttonOK.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
   buttonOK.setStepTimeout(200);
   buttonBack.setDebounce(50);
   buttonBack.setTimeout(500);
-  buttonBack.setClickTimeout(300);
+  buttonBack.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
   buttonBack.setStepTimeout(200);
   buttonUp.setTickMode(AUTO);
   buttonDown.setTickMode(AUTO);
