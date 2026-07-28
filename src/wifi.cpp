@@ -62,6 +62,7 @@ bool inEvilPortal = false, apRunning = false;
 bool inDeauthMenu = false, isScanning = false, isDeauthing = false;
 bool inWardriving = false, isWardriving = false;
 bool inPacketsMenu = false, isPacketScanning = false, isPacketViewing = false;
+bool wifiNetworkScanActive = false;
 bool wifiListUsesScanResults = false;
 int foundNetworks = 0;
 const int MAX_WIFI_NETWORKS = 64;
@@ -916,6 +917,45 @@ int getStoredWiFiNetworkCount() {
   return min(foundNetworks, MAX_WIFI_NETWORKS);
 }
 
+int serviceWiFiNetworkScan() {
+  if (!wifiNetworkScanActive) {
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    WiFi.scanDelete();
+    if (WiFi.scanNetworks(true, true) != WIFI_SCAN_RUNNING) {
+      WiFi.scanDelete();
+      return WIFI_SCAN_FAILED;
+    }
+    wifiNetworkScanActive = true;
+    return WIFI_SCAN_RUNNING;
+  }
+
+  int scanCount = WiFi.scanComplete();
+  if (scanCount == WIFI_SCAN_RUNNING) return WIFI_SCAN_RUNNING;
+
+  wifiNetworkScanActive = false;
+  if (scanCount < 0) {
+    WiFi.scanDelete();
+    return WIFI_SCAN_FAILED;
+  }
+  return scanCount;
+}
+
+void cancelWiFiNetworkScan() {
+  if (wifiNetworkScanActive) {
+    esp_wifi_scan_stop();
+    const uint32_t cancelStartedAt = millis();
+    while (WiFi.scanComplete() == WIFI_SCAN_RUNNING &&
+           millis() - cancelStartedAt < 100) {
+      delay(1);
+    }
+  }
+  wifiNetworkScanActive = false;
+  WiFi.scanDelete();
+  foundNetworks = 0;
+  wifiListUsesScanResults = false;
+}
+
 String getDisplayedWiFiNetworkName(int index) {
   if (wifiListUsesScanResults) return WiFi.SSID(index);
   return ssidList[index];
@@ -1051,10 +1091,20 @@ void handleDeauthSubmenu() {
     display.println(F("..."));
     display.display();
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    foundNetworks = WiFi.scanNetworks(false, true);
-    if (foundNetworks > 0) {
+    if (buttonBack.isClick()) {
+      cancelWiFiNetworkScan();
+      isScanning = false;
+      inDeauthMenu = false;
+      WiFi.mode(WIFI_OFF);
+      resetWiFiMenuButtons();
+      displayWiFiMenu(display, wifiMenuIndex);
+      return;
+    }
+
+    int scanStatus = serviceWiFiNetworkScan();
+    if (scanStatus == WIFI_SCAN_RUNNING) return;
+    if (scanStatus > 0) {
+      foundNetworks = scanStatus;
       isScanning = false;
       wifiListUsesScanResults = true;
       deauthMenuIndex = 0;
@@ -1162,10 +1212,20 @@ void handlePacketsMenu() {
     display.println(F("..."));
     display.display();
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    foundNetworks = WiFi.scanNetworks(false, true);
-    if (foundNetworks > 0) {
+    if (buttonBack.isClick()) {
+      cancelWiFiNetworkScan();
+      isPacketScanning = false;
+      inPacketsMenu = false;
+      WiFi.mode(WIFI_OFF);
+      resetWiFiMenuButtons();
+      displayWiFiMenu(display, wifiMenuIndex);
+      return;
+    }
+
+    int scanStatus = serviceWiFiNetworkScan();
+    if (scanStatus == WIFI_SCAN_RUNNING) return;
+    if (scanStatus > 0) {
+      foundNetworks = scanStatus;
       isPacketScanning = false;
       wifiListUsesScanResults = true;
       packetsMenuIndex = 0;
