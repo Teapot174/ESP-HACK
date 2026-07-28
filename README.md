@@ -32,8 +32,8 @@ By using the firmware, you must comply with the laws of your region. The firmwar
 
 ### Bluetooth
 
-- BLE-Spam:
-IOS, Android, Windows
+- Spam:
+IOS, Android, Samsung, Xiaomi, Windows.
 - BadBLE
 - Mouse
 
