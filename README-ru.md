@@ -76,7 +76,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Bird
 - Ping Pong
 - Bricks
-- Shooter
+- "Doom"
 
 ### Settings
 - Интерфейс:
