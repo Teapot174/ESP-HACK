@@ -65,7 +65,11 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Spectrum
 - Config
 
-**PN532 *(in development)***
+**PN532**
+- Read
+- Write
+- Emulate
+- Config
 
 ### Games
 - Snake
