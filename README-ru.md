@@ -33,7 +33,7 @@ ESP-HACK — мощная универсальная прошивка для ESP
 ### Bluetooth
 
 - BLE-Spam:
-IOS, Android, Windows
+IOS, Android, Samsung, Xiaomi, Windows.
 - BadBLE
 - Mouse
 
@@ -77,9 +77,10 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Ping Pong
 - Bricks
 - Shooter
+
 ### Settings
-- Цвет дисплея
-- Режим ожидания
+- Интерфейс:
+Цвет дисплея, Режим ожидания, Меню, Подменю.
 - Перезагрузка
 - Сброс
 - Обновить с SD
