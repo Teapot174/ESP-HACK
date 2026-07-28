@@ -76,7 +76,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Bird
 - Ping Pong
 - Bricks
-- Shooter
+- "Doom"
 
 ### Settings
 - Interface:
@@ -97,8 +97,6 @@ Display Color, Standby time, Menu, Submenu.
 - Holtec
 - Ansonic
 - Chamberlain
-- StarLine  
-- KeeLoq
 - Any other protocol with RAW mode
 
 ---
