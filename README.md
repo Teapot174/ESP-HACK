@@ -79,8 +79,8 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Shooter
 
 ### Settings
-- Display Color
-- Standby time
+- Interface:
+Display Color, Standby time, Menu, Submenu.
 - Restart
 - Reset
 - Update from SD
