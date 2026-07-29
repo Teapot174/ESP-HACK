@@ -49,9 +49,10 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 ### Infrared
 
-- IR-Send
-- IR-Read  
-- TV, PJ, AC OFF
+- Send  
+- Read  
+- TV-B-Gone
+- Universal Remote
 
 ### GPIO
 
