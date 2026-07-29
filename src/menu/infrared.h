@@ -3,10 +3,17 @@
 
 #include "display.h"
 #include "CONFIG.h"
-#include "interface.h"
+#include "interface/interface.h"
 
-#define IR_MENU_ITEM_COUNT 5
-static const char* irMenuItems[] = {"Send", "Read", "PJ-OFF", "AC-OFF", "TV-OFF"};
+static const char* irMenuItemsOriginal[] = {"Send", "Read", "TV-B-GONE", "Remote"};
+static const char* irMenuItemsList[] = {"Send", "Read", "TV-B-Gone", "Universal Remote"};
+static const SubmenuItems irSubmenuItems = {
+  irMenuItemsOriginal, irMenuItemsList, 4
+};
+
+inline byte getIRMenuItemCount() {
+  return irSubmenuItems.count;
+}
 
 static const unsigned char PROGMEM image_Power_bits[] = {
   0x0f,0xff,0xff,0xff,0xc0,0x0f,0xff,0xff,0xff,0xc0,0x30,0x00,0x00,0x00,0x30,0x30,
@@ -77,7 +84,7 @@ static const unsigned char PROGMEM image_InfraredLearnShort_bits[] = {
 
 
 inline void displayIRMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
-  displayInterfaceSubmenu(display, irMenuItems, IR_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displaySubmenu(display, irSubmenuItems, menuIndex, previousIndex);
 }
 
 #endif

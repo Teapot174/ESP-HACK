@@ -7,7 +7,7 @@
 #include "esp_wifi.h"
 #include "CONFIG.h"
 #include "misc.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include "subghz.h"
 #include "menu/wifi.h"
 #include "menu/bluetooth.h"
@@ -59,8 +59,8 @@ byte gamesMenuIndex = 0;
 
 byte settingsMenuIndex = 0;
 byte colorSelectionIndex = 1;
-byte menu = 0;
-byte submenu = 0;
+byte menu = 1;
+byte submenu = 1;
 
 extern const unsigned long standbyTimeoutOptionsMs[] = {0UL, 15000UL, 30000UL, 60000UL, 180000UL, 300000UL, 600000UL, 1800000UL};
 const char* standbyTimeoutLabels[] = {"Disable", "15s", "30s", "1m", "3m", "5m", "10m", "30m"};
@@ -99,6 +99,7 @@ static void createSDDirectories() {
   if (!SD.exists("/badkb")) SD.mkdir("/badkb");
   if (!SD.exists("/subghz")) SD.mkdir("/subghz");
   if (!SD.exists("/infrared")) SD.mkdir("/infrared");
+  if (!SD.exists("/infrared/assets")) SD.mkdir("/infrared/assets");
   if (!SD.exists("/ibutton")) SD.mkdir("/ibutton");
 }
 
@@ -241,8 +242,8 @@ bool ensureSDReadyInteractive(bool allowSkip) {
 }
 
 void applyFactoryDefaults() {
-  menu = 0;
-  submenu = 0;
+  menu = 1;
+  submenu = 1;
   colorSelectionIndex = 1;
   standbyTimeoutIndex = 2;
   standbyTimeoutMs = standbyTimeoutOptionsMs[standbyTimeoutIndex];
@@ -292,7 +293,7 @@ static bool loadAppearanceConfig() {
   AppearanceStorage stored;
   EEPROM.get(ESPHACK_APPEARANCE_EEPROM_ADDRESS, stored);
   if (stored.signature != APPEARANCE_STORAGE_SIGNATURE ||
-      stored.menu > 1 || stored.submenu > 1 ||
+      stored.menu > 3 || stored.submenu > 1 ||
       stored.color > 1 || stored.standby >= STANDBY_OPTION_COUNT) {
     return false;
   }
@@ -362,7 +363,13 @@ void loadConfig() {
         String val = line.substring(5);
         val.trim();
         val.toLowerCase();
-        legacyMenu = (val == "flipper" || val == "list") ? 1 : 0;
+        if (val == "wii") {
+          legacyMenu = 2;
+        } else if (val == "dsi") {
+          legacyMenu = 3;
+        } else {
+          legacyMenu = (val == "flipper" || val == "list") ? 1 : 0;
+        }
       } else if (line.startsWith("submenu=")) {
         String val = line.substring(8);
         val.trim();
@@ -407,6 +414,7 @@ void resetActivityTimer() {
     inStandby = false;
     standbyIgnoreUntilMs = millis() + 250;
     if (inMenu) {
+      resetMainMenuAnimation(currentMenu);
       OLED_printMenu(display, currentMenu);
     }
   }
@@ -421,9 +429,7 @@ void returnToMainMenu() {
   lastActivityTime = millis();
   standbyIgnoreUntilMs = millis() + 250;
   inMenu = true;
-  if (menu == 1) {
-    resetListInterfaceAnimation(currentMenu);
-  }
+  resetMainMenuAnimation(currentMenu);
   OLED_printMenu(display, currentMenu);
 }
 
@@ -439,12 +445,12 @@ static bool isMainMenuButtonPress(uint8_t pin, MenuButtonState &state) {
 
   if (!state.wasPressed) {
     state.wasPressed = true;
-    state.nextRepeatAt = now + getListInterfaceMenuInitialRepeatDelay();
+    state.nextRepeatAt = now + getListMenuInitialRepeatDelay();
     return true;
   }
 
   if (now >= state.nextRepeatAt) {
-    state.nextRepeatAt = now + getListInterfaceMenuRepeatDelay();
+    state.nextRepeatAt = now + getListMenuRepeatDelay();
     return true;
   }
 
@@ -606,9 +612,9 @@ void loop() {
     }
 
     static unsigned long listRefreshMs = 0;
-    if (menu == 1 && !anyClick && millis() - listRefreshMs >= 333) {
+    if ((menu == 1 || menu == 2 || menu == 3) && !anyClick && millis() - listRefreshMs >= 333) {
       listRefreshMs = millis();
-      displayListInterfaceMenu(display, currentMenu);
+      OLED_printMenu(display, currentMenu);
     }
 
     if (upPress) {

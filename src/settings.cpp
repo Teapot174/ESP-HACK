@@ -5,7 +5,7 @@
 #include <Update.h>
 #include "CONFIG.h"
 #include "Explorer.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include "menu/settings.h"
 
 extern DisplayType display;
@@ -45,11 +45,15 @@ static bool standbyNeedRedraw = true;
 static bool aboutNeedRedraw = true;
 
 static const char* interfaceItems[] = {"Menu", "Submenu", "Color", "Standby"};
-static const byte MENU_STYLE_ITEM_COUNT = 3;
-static const char* menuStyleItems[] = {"Original", "List", "Wii"};
+static const SubmenuItems interfaceSubmenuItems = {interfaceItems, interfaceItems, 4};
+static const byte MENU_STYLE_ITEM_COUNT = 4;
+static const char* menuStyleItems[] = {"Pages", "List", "Wii", "DSi"};
+static const SubmenuItems menuStyleSubmenuItems = {
+  menuStyleItems, menuStyleItems, MENU_STYLE_ITEM_COUNT
+};
 
 static void renderInterfaceMenu(int previousIndex = -1) {
-  displayInterfaceSubmenu(display, interfaceItems, 4, interfaceMenuIndex, previousIndex);
+  displaySubmenu(display, interfaceSubmenuItems, interfaceMenuIndex, previousIndex);
 }
 
 static void exitInterfaceDetail() {
@@ -88,7 +92,7 @@ void exitSettingsDetail() {
 
 void renderColorSetting(int previousIndex = -1) {
   colorNeedRedraw = false;
-  displayInterfaceSubmenu(display, colorOptions, COLOR_OPTION_COUNT, colorSelectionWorking, previousIndex);
+  displaySubmenu(display, colorOptions, COLOR_OPTION_COUNT, colorSelectionWorking, previousIndex);
 }
 
 void renderAboutSetting() {
@@ -112,7 +116,7 @@ void renderAboutSetting() {
 
 void renderStandbySetting(byte index, int previousIndex = -1) {
   standbyNeedRedraw = false;
-  displayInterfaceSubmenu(display, standbyTimeoutLabels, STANDBY_OPTION_COUNT, index, previousIndex);
+  displaySubmenu(display, standbyTimeoutLabels, STANDBY_OPTION_COUNT, index, previousIndex);
 }
 
 static void drawUpdateProgress(uint8_t progress) {
@@ -311,15 +315,15 @@ static void handleInterfaceMenu(bool upPress, bool downPress, bool okClick, bool
     if (upPress) {
       byte previousIndex = interfaceMenuWorking;
       interfaceMenuWorking = (interfaceMenuWorking + MENU_STYLE_ITEM_COUNT - 1) % MENU_STYLE_ITEM_COUNT;
-      displayInterfaceSubmenu(display, menuStyleItems, MENU_STYLE_ITEM_COUNT, interfaceMenuWorking, previousIndex);
+      displaySubmenu(display, menuStyleSubmenuItems, interfaceMenuWorking, previousIndex);
     }
     if (downPress) {
       byte previousIndex = interfaceMenuWorking;
       interfaceMenuWorking = (interfaceMenuWorking + 1) % MENU_STYLE_ITEM_COUNT;
-      displayInterfaceSubmenu(display, menuStyleItems, MENU_STYLE_ITEM_COUNT, interfaceMenuWorking, previousIndex);
+      displaySubmenu(display, menuStyleSubmenuItems, interfaceMenuWorking, previousIndex);
     }
     if (okClick) {
-      if (interfaceMenuWorking <= 1) {
+      if (interfaceMenuWorking < MENU_STYLE_ITEM_COUNT) {
         menu = interfaceMenuWorking;
         saveConfig();
       }
@@ -343,7 +347,7 @@ static void handleInterfaceMenu(bool upPress, bool downPress, bool okClick, bool
     if (interfaceMenuIndex == 0) {
       interfaceDetail = INTERFACE_MENU;
       interfaceMenuWorking = menu;
-      displayInterfaceSubmenu(display, menuStyleItems, MENU_STYLE_ITEM_COUNT, interfaceMenuWorking);
+      displaySubmenu(display, menuStyleSubmenuItems, interfaceMenuWorking);
     } else if (interfaceMenuIndex == 1) {
       submenu = submenu == 0 ? 1 : 0;
       saveConfig();
@@ -378,7 +382,7 @@ void handleSettingsSubmenu() {
   const bool isListSettingsSubmenu =
     submenu == 1 && currentDetail != SETTINGS_UPDATE && currentDetail != SETTINGS_ABOUT;
   const unsigned long repeatDelayMs =
-    getInterfaceSubmenuRepeatDelay(isListSettingsSubmenu);
+    getMenuSubmenuRepeatDelay(isListSettingsSubmenu);
   bool upPress = isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs);
   bool downPress = isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs);
   bool upClick = buttonUp.isClick();

@@ -6,7 +6,7 @@
 #include <DNSServer.h>
 #include <SD.h>
 #include "Explorer.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include "CONFIG.h"
 #include "misc.h"
 #include "menu/wifi.h"
@@ -1706,7 +1706,7 @@ void handleWiFiSubmenu() {
   static MenuButtonState downHeld;
 
   if (inFunctionSelection) {
-    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
     upPress = isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs);
     downPress = isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs);
   } else {

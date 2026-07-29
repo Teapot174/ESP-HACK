@@ -3,7 +3,7 @@
 
 #include "display.h"
 #include "CONFIG.h"
-#include "interface.h"
+#include "interface/interface.h"
 
 #define SETTINGS_MENU_ITEM_COUNT 5
 static const char* settingsMenuItems[] = {"Interface", "Restart", "Reset", "Update", "About"};
@@ -37,7 +37,7 @@ static const unsigned char PROGMEM image_Teapot_bits[] = {
 
 
 inline void displaySettingsMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
-  displayInterfaceSubmenu(display, settingsMenuItems, SETTINGS_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displaySubmenu(display, settingsMenuItems, SETTINGS_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 #endif

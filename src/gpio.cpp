@@ -1,7 +1,7 @@
 #include "menu/gpio.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include "CONFIG.h"
 #include "misc.h"
 #include "display.h"
@@ -341,7 +341,7 @@ static const char* getNRF24PinName(byte pin) {
 }
 
 void displayNRF24Menu(int previousIndex = -1) {
-  displayInterfaceSubmenu(display, nrf24MenuItems, NRF24_MENU_ITEM_COUNT, nrf24MenuIndex, previousIndex);
+  displaySubmenu(display, nrf24MenuItems, NRF24_MENU_ITEM_COUNT, nrf24MenuIndex, previousIndex);
 }
 
 static int16_t getNRF24ConfigArrowY(byte selection) {
@@ -390,7 +390,7 @@ void displayNRF24Config(int previousIndex = -1) {
 }
 
 void displayJammingMenu(int previousIndex = -1) {
-  displayInterfaceSubmenu(display, jammingModes, JAMMING_MODE_COUNT, jammingModeIndex, previousIndex);
+  displaySubmenu(display, jammingModes, JAMMING_MODE_COUNT, jammingModeIndex, previousIndex);
 }
 
 void displayJammingActive() {
@@ -577,7 +577,7 @@ void handleJammingMenu() {
 
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
 
-  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
   if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = jammingModeIndex;
     jammingModeIndex = (jammingModeIndex - 1 + JAMMING_MODE_COUNT) % JAMMING_MODE_COUNT;
@@ -643,7 +643,7 @@ void handleNRF24Submenu() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
-  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
   if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = nrf24MenuIndex;
     nrf24MenuIndex = (nrf24MenuIndex - 1 + NRF24_MENU_ITEM_COUNT) % NRF24_MENU_ITEM_COUNT;
@@ -847,7 +847,7 @@ bool startIButtonEmulation() {
 }
 
 void displayIButtonMenu(int previousIndex = -1) {
-  displayInterfaceSubmenu(display, iButtonMenuItems, IBUTTON_MENU_ITEM_COUNT, iButtonMenuIndex, previousIndex);
+  displaySubmenu(display, iButtonMenuItems, IBUTTON_MENU_ITEM_COUNT, iButtonMenuIndex, previousIndex);
 }
 
 void displayIButtonReadWaiting() {
@@ -995,7 +995,7 @@ void displayGPIOPlaceholder() {
 }
 
 void displayPN532Menu(int previousIndex = -1) {
-  displayInterfaceSubmenu(display, pn532MenuItems, PN532_MENU_ITEM_COUNT, pn532MenuIndex, previousIndex);
+  displaySubmenu(display, pn532MenuItems, PN532_MENU_ITEM_COUNT, pn532MenuIndex, previousIndex);
 }
 
 void displayPN532Placeholder() {
@@ -1164,7 +1164,7 @@ void handleIButtonSubmenu() {
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
 
   if (iButtonState == IBUTTON_MENU) {
-    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
     if (isMenuButtonPress(BUTTON_UP, menuUpHeld, repeatDelayMs)) {
       byte previousIndex = iButtonMenuIndex;
       iButtonMenuIndex = (iButtonMenuIndex - 1 + IBUTTON_MENU_ITEM_COUNT) % IBUTTON_MENU_ITEM_COUNT;
@@ -1388,7 +1388,7 @@ void handlePN532Submenu() {
     return;
   }
 
-  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
   if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = pn532MenuIndex;
     pn532MenuIndex = (pn532MenuIndex - 1 + PN532_MENU_ITEM_COUNT) % PN532_MENU_ITEM_COUNT;
@@ -1424,7 +1424,7 @@ void handleGPIOSubmenu() {
     }
     return;
   }
-  const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+  const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
   if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
     byte previousIndex = gpioMenuIndex;
     gpioMenuIndex = (gpioMenuIndex - 1 + GPIO_MENU_ITEM_COUNT) % GPIO_MENU_ITEM_COUNT;

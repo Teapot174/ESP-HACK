@@ -4,7 +4,7 @@
 #include "misc.h"
 #include <SD.h>
 #include "Explorer.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLEServer.h>
@@ -766,6 +766,8 @@ EBLEPayloadType currentSpamType;
 bool inSpamMenu = false;
 byte spamMenuIndex = 0;
 uint16_t spamIntervalMs = 100;
+static MenuButtonState spamUpHeld;
+static MenuButtonState spamDownHeld;
 static const byte SPAM_MENU_ITEM_COUNT = 5;
 static const char* spamMenuItems[] = {"Apple", "Android", "Samsung", "Xiaomi", "Windows"};
 const byte BLE_SPAM_LOG_LINES = 5;
@@ -787,7 +789,7 @@ const char* getBLESpamHeaderName(const char* spamType) {
 }
 
 void displaySpamMenu(byte menuIndex, int previousIndex = -1) {
-  displayInterfaceSubmenu(display, spamMenuItems, SPAM_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displaySubmenu(display, spamMenuItems, SPAM_MENU_ITEM_COUNT, menuIndex, previousIndex);
 }
 
 void clearBLESpamLog() {
@@ -1446,10 +1448,7 @@ void handleBluetoothSubmenu() {
       }
     }
   } else if (inSpamMenu && bleSpamState == IDLE) {
-    static MenuButtonState spamUpHeld;
-    static MenuButtonState spamDownHeld;
-
-    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
     if (isMenuButtonPress(BUTTON_UP, spamUpHeld, repeatDelayMs)) {
       byte previousIndex = spamMenuIndex;
       spamMenuIndex = (spamMenuIndex - 1 + SPAM_MENU_ITEM_COUNT) % SPAM_MENU_ITEM_COUNT;
@@ -1470,6 +1469,9 @@ void handleBluetoothSubmenu() {
       }
       bleSpamState = READY;
       spamIntervalMs = 100;
+      resetButtonStates();
+      resetMenuButtonState(spamUpHeld);
+      resetMenuButtonState(spamDownHeld);
       displayFullBLESpamScreen(spamMenuItems[spamMenuIndex], false);
       Serial.println(F("[Bluetooth] Ready for BLE spam"));
     }
@@ -1483,7 +1485,7 @@ void handleBluetoothSubmenu() {
       static MenuButtonState upHeld;
       static MenuButtonState downHeld;
 
-      const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+      const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
       if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
         byte previousIndex = bluetoothMenuIndex;
         bluetoothMenuIndex = (bluetoothMenuIndex - 1 + BLUETOOTH_MENU_ITEM_COUNT) % BLUETOOTH_MENU_ITEM_COUNT;
@@ -1530,6 +1532,10 @@ void handleBluetoothSubmenu() {
         } else {
           inSpamMenu = true;
           spamMenuIndex = 0;
+          bleSpamState = IDLE;
+          resetButtonStates();
+          resetMenuButtonState(spamUpHeld);
+          resetMenuButtonState(spamDownHeld);
           displaySpamMenu(spamMenuIndex);
           Serial.println(F("[Bluetooth] Entered Spam menu"));
         }

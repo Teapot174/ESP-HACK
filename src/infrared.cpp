@@ -5,8 +5,10 @@
 #include <IRrecv.h>
 #include <IRsend.h>
 #include <IRutils.h>
+#include <U8g2_for_Adafruit_GFX.h>
+#include "ir_remote.h"
 #include "CONFIG.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include "menu/infrared.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
@@ -45,12 +47,40 @@ void drawSendingScreen(int progress);
 
 bool inIRMenu = false;
 
-enum AppState { MENU, IR_SELECTION, SENDING_IR, IR_FILE_EXPLORER, IR_READING, IR_DELETE_CONFIRM, IR_SIGNAL_SUBMENU };
+enum AppState { MENU, IR_SELECTION, SENDING_IR, IR_FILE_EXPLORER, IR_READING, IR_DELETE_CONFIRM, IR_SIGNAL_SUBMENU, IR_UNIVERSAL_MENU };
+constexpr byte IR_MENU_SEND = 0;
+constexpr byte IR_MENU_READ = 1;
+constexpr byte IR_MENU_TV_OFF = 2;
+constexpr byte IR_MENU_REMOTE = 3;
 AppState state = MENU;
 
 volatile bool irAbortRequested = false;
+volatile bool irOkReleasePending = false;
+volatile bool irBackReleasePending = false;
+volatile uint32_t irOkPressedAtUs = 0;
+volatile uint32_t irBackPressedAtUs = 0;
 void IRAM_ATTR onIrAbort() {
   irAbortRequested = true;
+}
+void IRAM_ATTR onIrOkEdge() {
+  const uint32_t now = micros();
+  if (digitalRead(BUTTON_OK) == LOW) {
+    irOkPressedAtUs = now;
+  } else if (irOkPressedAtUs != 0) {
+    if (now - irOkPressedAtUs <= 300000UL) irOkReleasePending = true;
+    irOkPressedAtUs = 0;
+    irAbortRequested = true;
+  }
+}
+void IRAM_ATTR onIrBackEdge() {
+  const uint32_t now = micros();
+  if (digitalRead(BUTTON_BACK) == LOW) {
+    irBackPressedAtUs = now;
+  } else if (irBackPressedAtUs != 0) {
+    if (now - irBackPressedAtUs <= 300000UL) irBackReleasePending = true;
+    irBackPressedAtUs = 0;
+    irAbortRequested = true;
+  }
 }
 bool irSuppressInput = false;
 unsigned long irSuppressStart = 0;
@@ -95,37 +125,43 @@ struct TvbgState {
 TvbgState tvbg;
 uint16_t tvbgRawData[300];
 
-// Projector codes
-const uint32_t pjOffSignals[] = {
-  0xA90, 0x4B74, 0xB04F, 0xA59A, 0xB90,
-  0xC90, 0xD90, 0x4BB4, 0x30CF, 0xA55A
-};
-
-// AC codes
-const uint32_t acOffSignals[] = {
-  0xB2F, 0xB2E, 0xB2D, 0xB2C, 0xA1F0,
-  0xE0E09966, 0xC2A4, 0xB4C8, 0xB2A, 0xA1E0,
-  0xE0E019E6, 0xC2A5, 0xB4C9
-};
-
-constexpr int numPJSignals = sizeof(pjOffSignals) / sizeof(pjOffSignals[0]);
-constexpr int numACSignals = sizeof(acOffSignals) / sizeof(acOffSignals[0]);
-
-struct FixedAttackState {
-  const uint32_t* signals = nullptr;
-  int count = 0;
-  int index = 0;
-  unsigned long lastSendTime = 0;
-  int lastProgress = -1;
-};
-
-FixedAttackState fixedAttack;
-
 #define MAX_FILES 50
 static const char* irExts[] = {".ir"};
 ExplorerEntry irFileList[MAX_FILES];
 ExplorerState irExplorer;
 ExplorerConfig irExplorerCfg = {"/infrared", irExts, 1, true, false, true, true};
+
+static const char* universalRemoteItems[] = {
+  "TVs", "Audio", "Projector", "LEDs", "Fans", "ACs"
+};
+static const char* universalRemoteFiles[] = {
+  "tv.ir", "audio.ir", "projectors.ir", "leds.ir", "fans.ir", "ac.ir"
+};
+static const char* universalActions[][8] = {
+  {"Power", "Mute", "Vol_up", "Ch_next", "Vol_dn", "Ch_prev", nullptr, nullptr},
+  {"Power", "Mute", "Play", "Pause", "Prev", "Next", "Vol_dn", "Vol_up"},
+  {"Power", "Mute", "Vol_up", "Vol_dn", "Play", "Pause", nullptr, nullptr},
+  {"Power_on", "Power_off", "Brightness_up", "Brightness_dn", "Red", "Green", "Blue", "White"},
+  {"Power", "Mode", "Speed_up", "Speed_dn", "Rotate", "Timer", nullptr, nullptr},
+  {"Off", "Dh", "Cool_hi", "Heat_hi", "Cool_lo", "Heat_lo", nullptr, nullptr}
+};
+static const byte universalActionCounts[] = {6, 8, 6, 8, 6, 6};
+struct UniversalButtonLayout {
+  int16_t x;
+  int16_t y;
+};
+static const UniversalButtonLayout universalButtonLayouts[][8] = {
+  {{6, 18}, {40, 18}, {38, 51}, {3, 51}, {38, 91}, {3, 91}},
+  {{6, 13}, {39, 13}, {6, 42}, {6, 71}, {6, 101}, {39, 101}, {37, 77}, {37, 43}},
+  {{6, 24}, {39, 24}, {37, 55}, {37, 89}, {6, 58}, {6, 87}},
+  {{10, 12}, {35, 12}, {10, 42}, {35, 42}, {10, 74}, {35, 74}, {10, 99}, {35, 99}},
+  {{6, 24}, {39, 24}, {37, 55}, {37, 89}, {6, 58}, {6, 87}},
+  {{6, 15}, {39, 15}, {3, 49}, {37, 49}, {3, 100}, {37, 100}}
+};
+static const char* universalPanelTitles[] = {"TV", "Audio player", "Projector", "LEDs", "Fan remote", "AC"};
+static const int16_t universalTitleX[] = {25, 1, 10, 20, 5, 24};
+static const int16_t universalTitleY[] = {10, 10, 11, 9, 11, 10};
+constexpr byte UNIVERSAL_REMOTE_ITEM_COUNT = 6;
 
 #define MAX_SIGNALS 20
 String irSignalList[MAX_SIGNALS];
@@ -133,9 +169,151 @@ int irSignalCount = 0;
 int irSignalIndex = 0;
 String irSelectedSignal = "";
 
+#define MAX_UNIVERSAL_SIGNAL_INDICES 1000
+static uint32_t universalSignalOffsets[MAX_UNIVERSAL_SIGNAL_INDICES];
+static uint16_t universalSignalCount = 0;
+static uint16_t universalSignalPosition = 0;
+static bool universalActive = false;
+static byte universalCategory = 0;
+static bool universalPaused = false;
+static bool irRemoteMode = false;
+static byte universalSelectedAction = 0;
+static bool universalLoadError = false;
+static bool universalLoadCanceled = false;
+static unsigned long universalBackIgnoreUntil = 0;
+
 IRsend irsend(IR_TRANSMITTER);
 IRrecv irrecv(IR_RECIVER, 1024, 100);
 decode_results results;
+
+static U8G2_FOR_ADAFRUIT_GFX universalText;
+static bool universalPortrait = false;
+static CompressIcon* universalIconDecoder = nullptr;
+
+static void setUniversalPortrait(bool enabled) {
+  if (universalPortrait == enabled) return;
+  universalPortrait = enabled;
+  // The Flipper vertical view is physically opposite to Adafruit rotation 1.
+  display.setRotation(enabled ? 3 : 0);
+  if (enabled) {
+    if (!universalIconDecoder) universalIconDecoder = compress_icon_alloc(4096);
+    universalText.begin(display);
+    universalText.setFont(u8g2_font_haxrcorp4089_tr);
+    universalText.setFontMode(1);
+    universalText.setForegroundColor(SH110X_WHITE);
+    universalText.setBackgroundColor(SH110X_BLACK);
+  }
+}
+
+// Flipper icon assets are decoded as XBM (LSB-first), while Adafruit
+// drawBitmap() consumes MSB-first data. Draw the decoded rows as XBM.
+static void drawUniversalXbm(
+    int16_t x,
+    int16_t y,
+    const uint8_t* bitmap,
+    uint16_t width,
+    uint16_t height,
+    uint16_t color = SH110X_WHITE) {
+  if (!bitmap) return;
+  const uint16_t rowBytes = (width + 7) / 8;
+  for (uint16_t row = 0; row < height; ++row) {
+    const uint8_t* rowData = bitmap + row * rowBytes;
+    for (uint16_t column = 0; column < width; ++column) {
+      if (rowData[column >> 3] & (1U << (column & 7))) {
+        display.drawPixel(x + column, y + row, color);
+      }
+    }
+  }
+}
+
+static void drawUniversalDecodedIcon(
+    int16_t x, int16_t y, const Icon& icon, uint16_t color = SH110X_WHITE) {
+  if (!universalIconDecoder) return;
+  uint8_t* bitmap = nullptr;
+  compress_icon_decode(universalIconDecoder, icon.frames[0], &bitmap);
+  drawUniversalXbm(x, y, bitmap, icon.width, icon.height, color);
+}
+
+static void drawUniversalGlyph(const String& action, int16_t x, int16_t y, bool selected) {
+  const Icon* icon = nullptr;
+  if (action == "Power" || action == "Power_on") icon = selected ? &I_power_hover_19x20 : &I_power_19x20;
+  else if (action == "Power_off" || action == "Off") icon = selected ? &I_off_hover_19x20 : &I_off_19x20;
+  else if (action == "Mute") icon = selected ? &I_mute_hover_19x20 : &I_mute_19x20;
+  else if (action == "Vol_up" || action == "Speed_up") icon = selected ? &I_volup_hover_24x21 : &I_volup_24x21;
+  else if (action == "Vol_dn" || action == "Speed_dn") icon = selected ? &I_voldown_hover_24x21 : &I_voldown_24x21;
+  else if (action == "Ch_next") icon = selected ? &I_ch_up_hover_24x21 : &I_ch_up_24x21;
+  else if (action == "Ch_prev") icon = selected ? &I_ch_down_hover_24x21 : &I_ch_down_24x21;
+  else if (action == "Play") icon = selected ? &I_play_hover_19x20 : &I_play_19x20;
+  else if (action == "Pause") icon = selected ? &I_pause_hover_19x20 : &I_pause_19x20;
+  else if (action == "Prev") icon = selected ? &I_prev_hover_19x20 : &I_prev_19x20;
+  else if (action == "Next") icon = selected ? &I_next_hover_19x20 : &I_next_19x20;
+  else if (action == "Brightness_up") icon = selected ? &I_plus_hover_19x20 : &I_plus_19x20;
+  else if (action == "Brightness_dn") icon = selected ? &I_minus_hover_19x20 : &I_minus_19x20;
+  else if (action == "Red") icon = selected ? &I_red_hover_19x20 : &I_red_19x20;
+  else if (action == "Green") icon = selected ? &I_green_hover_19x20 : &I_green_19x20;
+  else if (action == "Blue") icon = selected ? &I_blue_hover_19x20 : &I_blue_19x20;
+  else if (action == "White") icon = selected ? &I_white_hover_19x20 : &I_white_19x20;
+  else if (action == "Mode") icon = selected ? &I_mode_hover_19x20 : &I_mode_19x20;
+  else if (action == "Rotate") icon = selected ? &I_rotate_hover_19x20 : &I_rotate_19x20;
+  else if (action == "Timer") icon = selected ? &I_timer_hover_19x20 : &I_timer_19x20;
+  else if (action == "Dh") icon = selected ? &I_dry_hover_19x20 : &I_dry_19x20;
+  else if (action == "Cool_hi" || action == "Heat_hi") icon = selected ? &I_max_hover_24x23 : &I_max_24x23;
+  else if (action == "Cool_lo" || action == "Heat_lo") icon = selected ? &I_celsius_hover_24x23 : &I_celsius_24x23;
+  if (icon && universalIconDecoder) {
+    drawUniversalDecodedIcon(x, y, *icon);
+    return;
+  }
+  const uint16_t color = selected ? SH110X_BLACK : SH110X_WHITE;
+  display.setTextColor(color);
+  if (action == "Power" || action == "Power_on" || action == "Power_off" || action == "Off") {
+    display.drawCircle(x + 9, y + 10, 7, color);
+    display.drawLine(x + 9, y + 1, x + 9, y + 10, color);
+    return;
+  }
+  if (action == "Mute") {
+    display.fillRect(x + 1, y + 7, 5, 7, color);
+    display.fillTriangle(x + 6, y + 7, x + 11, y + 3, x + 11, y + 17, color);
+    display.drawLine(x + 14, y + 5, x + 18, y + 15, color);
+    display.drawLine(x + 18, y + 5, x + 14, y + 15, color);
+    return;
+  }
+  if (action == "Vol_up" || action == "Speed_up" || action == "Brightness_up" || action == "Cool_hi" || action == "Heat_hi") {
+    display.drawLine(x + 9, y + 17, x + 9, y + 3, color);
+    display.drawLine(x + 9, y + 3, x + 3, y + 9, color);
+    display.drawLine(x + 9, y + 3, x + 15, y + 9, color);
+    return;
+  }
+  if (action == "Vol_dn" || action == "Speed_dn" || action == "Brightness_dn" || action == "Cool_lo" || action == "Heat_lo") {
+    display.drawLine(x + 9, y + 3, x + 9, y + 17, color);
+    display.drawLine(x + 9, y + 17, x + 3, y + 11, color);
+    display.drawLine(x + 9, y + 17, x + 15, y + 11, color);
+    return;
+  }
+  if (action == "Ch_next" || action == "Next" || action == "Play") {
+    display.fillTriangle(x + 4, y + 3, x + 16, y + 10, x + 4, y + 17, color);
+    return;
+  }
+  if (action == "Ch_prev" || action == "Prev") {
+    display.fillTriangle(x + 16, y + 3, x + 4, y + 10, x + 16, y + 17, color);
+    return;
+  }
+  if (action == "Pause") {
+    display.fillRect(x + 4, y + 3, 4, 14, color);
+    display.fillRect(x + 12, y + 3, 4, 14, color);
+    return;
+  }
+  if (action == "Plus" || action == "Red" || action == "Green" || action == "Blue" || action == "White") {
+    display.drawRect(x + 2, y + 2, 15, 15, color);
+    display.drawLine(x + 9, y + 4, x + 9, y + 15, color);
+    display.drawLine(x + 4, y + 9, x + 14, y + 9, color);
+    return;
+  }
+  display.drawRect(x + 2, y + 2, 15, 15, color);
+}
+
+static void drawUniversalIcon(int16_t x, int16_t y, const Icon& icon) {
+  drawUniversalDecodedIcon(x, y, icon);
+}
 
 bool readSignal = false;
 String strDeviceContent = "";
@@ -154,8 +332,8 @@ void initIR() {
   pinMode(IR_RECIVER, INPUT);
   static bool abortIsrAttached = false;
   if (!abortIsrAttached) {
-    attachInterrupt(digitalPinToInterrupt(BUTTON_OK), onIrAbort, RISING);
-    attachInterrupt(digitalPinToInterrupt(BUTTON_BACK), onIrAbort, RISING);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_OK), onIrOkEdge, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_BACK), onIrBackEdge, CHANGE);
     abortIsrAttached = true;
   }
 }
@@ -298,15 +476,6 @@ bool sendNextTvbgCode() {
   }
 }
 
-void startFixedAttack(const uint32_t* signals, int count, const __FlashStringHelper* logMsg) {
-  fixedAttack = {};
-  fixedAttack.signals = signals;
-  fixedAttack.count = count;
-  irAbortRequested = false;
-  drawSendingScreen(0);
-  Serial.println(logMsg);
-}
-
 bool isAbortSendPressed() {
   if (irAbortRequested) return true;
   if (buttonOK.isClick() || buttonBack.isClick()) {
@@ -314,33 +483,6 @@ bool isAbortSendPressed() {
     return true;
   }
   return false;
-}
-
-bool handleFixedAttack(unsigned long currentMillis) {
-  if (isAbortSendPressed()) {
-    startInputSuppress();
-    return false;
-  }
-  if (fixedAttack.signals == nullptr || fixedAttack.count == 0) {
-    return false;
-  }
-  if (fixedAttack.index >= fixedAttack.count) {
-    return false;
-  }
-  if ((currentMillis - fixedAttack.lastSendTime) >= 15) {
-    fixedAttack.lastSendTime = currentMillis;
-    const uint32_t signal = fixedAttack.signals[fixedAttack.index];
-    irsend.sendNEC(signal, 32);
-    fixedAttack.index++;
-    const int progress = map(fixedAttack.index, 0, fixedAttack.count, 0, 100);
-    if (progress != fixedAttack.lastProgress) {
-      drawSendingScreen(progress);
-      fixedAttack.lastProgress = progress;
-    }
-    Serial.print(F("IR signal sent: 0x"));
-    Serial.println(signal, HEX);
-  }
-  return true;
 }
 
 void displayIRSelection(byte menuIndex, String signalName = "") {
@@ -351,10 +493,10 @@ void displayIRSelection(byte menuIndex, String signalName = "") {
   display.setCursor(62, 43);
   display.print(F("Press OK."));
   
-  if (menuIndex == 0 || menuIndex == 2 || menuIndex == 3 || menuIndex == 4) {
+  if (menuIndex == IR_MENU_SEND || menuIndex == IR_MENU_TV_OFF) {
     display.drawBitmap(14, 12, image_Power_bits, 38, 40, SH110X_WHITE);
   }
-  if (menuIndex == 0 && signalName != "") {
+  if (menuIndex == IR_MENU_SEND && signalName != "") {
     display.setCursor(66, 26);
     display.print(signalName.length() > 10 ? signalName.substring(0, 10) : signalName);
   }
@@ -367,20 +509,266 @@ void drawSendingScreen(int progress) {
   display.setTextWrap(false);
   
   display.setTextSize(2);
-  display.setCursor(69, 23);
-  if (irMenuIndex == 2 || irMenuIndex == 3 || irMenuIndex == 4) {
-    display.print(progress);
-    display.print(F("%"));
+  if (irMenuIndex == IR_MENU_TV_OFF) {
+    const String progressText = String(progress) + F("%");
+    int16_t boundsX;
+    int16_t boundsY;
+    uint16_t progressWidth;
+    uint16_t progressHeight;
+    display.getTextBounds(progressText, 0, 0, &boundsX, &boundsY, &progressWidth, &progressHeight);
+
+    display.setTextSize(1);
+    uint16_t attackWidth;
+    uint16_t attackHeight;
+    display.getTextBounds(F("TVBG Attack"), 0, 0, &boundsX, &boundsY, &attackWidth, &attackHeight);
+    const int16_t attackCenterX = 58 + static_cast<int16_t>(attackWidth) / 2;
+    display.setTextSize(2);
+    display.setCursor(attackCenterX - static_cast<int16_t>(progressWidth) / 2, 23);
+    display.print(progressText);
   }
   
-  if (irMenuIndex == 0 || irMenuIndex == 2 || irMenuIndex == 3 || irMenuIndex == 4) {
+  if (irMenuIndex == IR_MENU_SEND || irMenuIndex == IR_MENU_TV_OFF || universalActive) {
     display.drawBitmap(14, 12, image_Power_hvr_bits, 38, 40, SH110X_WHITE);
     display.setTextSize(1);
-    display.setCursor(62, 43);
-    display.print(irMenuIndex == 0 ? F("Sending...") : F("IR-Attack."));
+    display.setCursor(58, 43);
+    display.print(universalActive ? F("Universal...") : (irMenuIndex == IR_MENU_SEND ? F("Sending...") : F("TVBG Attack")));
   }
   
   display.display();
+}
+
+static void displayUniversalRemoteMenu(int previousIndex = -1) {
+  setUniversalPortrait(false);
+  displaySubmenu(display, universalRemoteItems, UNIVERSAL_REMOTE_ITEM_COUNT, irSignalIndex, previousIndex);
+}
+
+static void displayOriginalRemoteMenu(int previousIndex = -1) {
+  setUniversalPortrait(false);
+  // Original submenu uses the stock animated vertical submenu renderer.
+  displaySubmenu(display, universalRemoteItems, UNIVERSAL_REMOTE_ITEM_COUNT, irSignalIndex, previousIndex);
+}
+
+static void drawCategoryMenu(int previousIndex = -1) {
+  if (submenu == 1) displayUniversalRemoteMenu(previousIndex);
+  else displayOriginalRemoteMenu(previousIndex);
+}
+
+static void drawUniversalRemoteScreen(bool flush = true) {
+  setUniversalPortrait(true);
+  display.clearDisplay();
+  universalText.setForegroundColor(SH110X_WHITE);
+  universalText.setFont(u8g2_font_helvB08_tr);
+  universalText.setFontMode(1);
+  universalText.setCursor(universalTitleX[universalCategory], universalTitleY[universalCategory]);
+  universalText.print(universalPanelTitles[universalCategory]);
+  universalText.setFont(u8g2_font_haxrcorp4089_tr);
+  universalText.setFontMode(1);
+
+  const byte count = universalActionCounts[universalCategory];
+  for (byte i = 0; i < count; ++i) {
+    const int16_t x = universalButtonLayouts[universalCategory][i].x;
+    const int16_t y = universalButtonLayouts[universalCategory][i].y;
+    const bool selected = i == irSignalIndex;
+    drawUniversalGlyph(universalActions[universalCategory][i], x, y, selected);
+  }
+  switch (universalCategory) {
+    case 0:
+      drawUniversalIcon(4, 40, I_power_text_24x5);
+      drawUniversalIcon(40, 40, I_mute_text_19x5);
+      drawUniversalIcon(0, 64, I_ch_text_31x34);
+      drawUniversalIcon(35, 64, I_vol_tv_text_29x34);
+      break;
+    case 1:
+      drawUniversalIcon(4, 35, I_power_text_24x5);
+      drawUniversalIcon(39, 35, I_mute_text_19x5);
+      drawUniversalIcon(6, 64, I_play_text_19x5);
+      drawUniversalIcon(4, 93, I_pause_text_23x5);
+      drawUniversalIcon(6, 123, I_prev_text_19x5);
+      drawUniversalIcon(39, 123, I_next_text_19x6);
+      drawUniversalIcon(34, 56, I_vol_ac_text_30x30);
+      break;
+    case 2:
+      drawUniversalIcon(4, 46, I_power_text_24x5);
+      drawUniversalIcon(39, 46, I_mute_text_19x5);
+      drawUniversalIcon(6, 80, I_play_text_19x5);
+      drawUniversalIcon(4, 109, I_pause_text_23x5);
+      drawUniversalIcon(34, 68, I_vol_ac_text_30x30);
+      break;
+    case 3:
+      drawUniversalIcon(15, 34, I_on_text_9x5);
+      drawUniversalIcon(38, 34, I_off_text_12x5);
+      drawUniversalIcon(12, 64, I_brightness_text_40x5);
+      drawUniversalIcon(19, 121, I_color_text_24x5);
+      break;
+    case 4:
+      drawUniversalIcon(4, 46, I_power_text_24x5);
+      drawUniversalIcon(39, 46, I_mode_text_20x5);
+      drawUniversalIcon(4, 80, I_rotate_text_24x5);
+      drawUniversalIcon(4, 109, I_timer_text_23x5);
+      drawUniversalIcon(34, 68, I_speed_text_30x30);
+      break;
+    case 5:
+      drawUniversalIcon(10, 37, I_off_text_12x5);
+      drawUniversalIcon(41, 37, I_dry_text_15x5);
+      drawUniversalIcon(0, 60, I_cool_30x51);
+      drawUniversalIcon(34, 60, I_heat_30x51);
+      break;
+  }
+  universalText.setForegroundColor(SH110X_WHITE);
+  if (flush) display.display();
+}
+
+static void drawUniversalBoldRoundedFrame(int16_t x, int16_t y, int16_t width, int16_t height) {
+  display.fillRect(x + 2, y + 2, width - 3, height - 3, SH110X_WHITE);
+  display.drawLine(x + 3, y, x + width - 3, y, SH110X_BLACK);
+  display.drawLine(x + 2, y + 1, x + width - 2, y + 1, SH110X_BLACK);
+  display.drawLine(x, y + 3, x, y + height - 3, SH110X_BLACK);
+  display.drawLine(x + 1, y + 2, x + 1, y + height - 2, SH110X_BLACK);
+  display.drawLine(x + width, y + 3, x + width, y + height - 3, SH110X_BLACK);
+  display.drawLine(x + width - 1, y + 2, x + width - 1, y + height - 2, SH110X_BLACK);
+  display.drawLine(x + 3, y + height, x + width - 3, y + height, SH110X_BLACK);
+  display.drawLine(x + 2, y + height - 1, x + width - 2, y + height - 1, SH110X_BLACK);
+  display.fillRect(x + 2, y + 2, 2, 2, SH110X_BLACK);
+  display.fillRect(x + width - 3, y + 2, 2, 2, SH110X_BLACK);
+  display.fillRect(x + 2, y + height - 3, 2, 2, SH110X_BLACK);
+  display.fillRect(x + width - 3, y + height - 3, 2, 2, SH110X_BLACK);
+}
+
+static void drawUniversalCenteredText(const char* text, int16_t centerX, int16_t baselineY) {
+  universalText.setCursor(centerX - universalText.getUTF8Width(text) / 2, baselineY);
+  universalText.print(text);
+}
+
+static void drawUniversalDecodedIconScaled(
+    int16_t x, int16_t y, const Icon& icon, uint8_t scale, uint16_t color) {
+  if (!universalIconDecoder || scale == 0) return;
+  uint8_t* bitmap = nullptr;
+  compress_icon_decode(universalIconDecoder, icon.frames[0], &bitmap);
+  const uint16_t rowBytes = (icon.width + 7) / 8;
+  for (uint16_t row = 0; row < icon.height; ++row) {
+    for (uint16_t column = 0; column < icon.width; ++column) {
+      if (bitmap[row * rowBytes + (column >> 3)] & (1U << (column & 7))) {
+        display.fillRect(x + column * scale, y + row * scale, scale, scale, color);
+      }
+    }
+  }
+}
+
+static void drawUniversalSendingScreen(int progress) {
+  // The progress popup is drawn over the button panel.
+  drawUniversalRemoteScreen(false);
+  universalText.setFont(u8g2_font_haxrcorp4089_tr);
+  universalText.setFontMode(1);
+  universalText.setForegroundColor(SH110X_BLACK);
+  universalText.setBackgroundColor(SH110X_WHITE);
+  const int16_t x = 0;
+  const int16_t y = 25;
+  const int16_t width = 63;
+  // Keep only a few pixels below the lower send/resume bitmap.
+  const int16_t height = 72;
+  drawUniversalBoldRoundedFrame(x, y, width, height);
+
+  drawUniversalCenteredText(universalPaused ? "Paused" : "Sending...", x + 32, y + 12);
+
+  // Progress bar geometry: 56x9 at (4,44).
+  const int16_t barX = x + 4;
+  const int16_t barY = y + 19;
+  const int16_t barWidth = width - 7;
+  display.fillRect(barX + 1, barY + 1, barWidth - 2, 7, SH110X_WHITE);
+  display.drawRoundRect(barX, barY, barWidth, 9, 3, SH110X_BLACK);
+  display.fillRect(barX + 1, barY + 1, map(progress, 0, 100, 0, barWidth - 2), 7, SH110X_BLACK);
+
+  char progressText[16];
+  if (universalLoadError) {
+    snprintf(progressText, sizeof(progressText), "error");
+  } else if (universalSignalCount == 0) {
+    snprintf(progressText, sizeof(progressText), "loading...");
+  } else {
+    const uint16_t sentCount = min<uint16_t>(universalSignalPosition, universalSignalCount);
+    snprintf(progressText, sizeof(progressText), "%u/%u", sentCount, universalSignalCount);
+  }
+  // The popup is 64 pixels wide in the rotated 64x128 view. U8g2 measures
+  // the actual glyph width, so 32 keeps 1-, 2- and 3-digit counters centered.
+  drawUniversalCenteredText(progressText, x + 32, y + 40);
+
+  const int16_t buttonsX = x + (universalPaused ? 10 : 14);
+  const int16_t buttonsY = y + 50;
+  // Stop and pause are intentionally swapped: OK is the first row, Back the second.
+  drawUniversalDecodedIcon(buttonsX + 1, buttonsY, I_Ok_btn_9x9, SH110X_BLACK);
+  universalText.setCursor(buttonsX + 14, buttonsY + 8);
+  universalText.print(universalPaused ? "send" : "pause");
+  drawUniversalDecodedIcon(buttonsX, buttonsY + 10, I_Pin_back_arrow_10x8, SH110X_BLACK);
+  universalText.setCursor(buttonsX + 14, buttonsY + 17);
+  universalText.print(universalPaused ? "resume" : "stop");
+  universalText.setForegroundColor(SH110X_WHITE);
+  display.display();
+}
+
+static bool loadUniversalSignalNames(const String& fileName) {
+  setUniversalPortrait(true);
+  irExplorer.currentDir = "/infrared/assets";
+  irSignalCount = 0;
+  File file = SD.open(irExplorer.currentDir + "/" + fileName, FILE_READ);
+  if (!file) return false;
+
+  int signalIndex = -1;
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (!line.startsWith("name:")) continue;
+    signalIndex++;
+    String name = line.substring(5);
+    name.trim();
+    for (byte i = 0; i < universalActionCounts[universalCategory]; ++i) {
+      if (name == universalActions[universalCategory][i]) {
+        irSignalList[i] = name;
+        break;
+      }
+    }
+  }
+  file.close();
+  irExplorer.selectedFile = fileName;
+  irSignalCount = universalActionCounts[universalCategory];
+  return true;
+}
+
+static bool collectUniversalSignalIndices(const String& action) {
+  universalSignalCount = 0;
+  universalSignalPosition = 0;
+  universalLoadError = false;
+  universalLoadCanceled = false;
+  File file = SD.open(irExplorer.currentDir + "/" + universalRemoteFiles[universalCategory], FILE_READ);
+  if (!file) {
+    universalLoadError = true;
+    return false;
+  }
+
+  int signalIndex = -1;
+  while (file.available()) {
+    // SD indexing can take long enough for a BACK press to arrive between
+    // normal loop iterations. Abort loading immediately; do not turn that
+    // release into Pause or a signal selection event.
+    if (irBackReleasePending) {
+      irBackReleasePending = false;
+      file.close();
+      universalSignalCount = 0;
+      universalSignalPosition = 0;
+      universalLoadCanceled = true;
+      return false;
+    }
+    const uint32_t lineOffset = file.position();
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (!line.startsWith("name:")) continue;
+    signalIndex++;
+    String name = line.substring(5);
+    name.trim();
+    if (name == action && universalSignalCount < MAX_UNIVERSAL_SIGNAL_INDICES) {
+      universalSignalOffsets[universalSignalCount++] = lineOffset;
+    }
+  }
+  file.close();
+  return universalSignalCount > 0;
 }
 
 void drawReadingScreen() {
@@ -494,8 +882,8 @@ static int nextInfraredFileIndex() {
 static bool irSignalIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
   const bool pressed = digitalRead(pin) == LOW;
   const unsigned long now = millis();
-  const unsigned long initialDelayMs = 250;
-  const unsigned long repeatDelayMs = 250;
+  const unsigned long initialDelayMs = 125;
+  const unsigned long repeatDelayMs = 125;
 
   if (!pressed) {
     state.wasPressed = false;
@@ -515,6 +903,14 @@ static bool irSignalIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
   }
 
   return false;
+}
+
+static bool irButtonReleased(uint8_t pin, bool& wasDown, unsigned long& downAt) {
+  const bool isDown = digitalRead(pin) == LOW;
+  if (isDown && !wasDown) downAt = millis();
+  const bool released = !isDown && wasDown && (millis() - downAt <= 300);
+  wasDown = isDown;
+  return released;
 }
 
 static bool irSelectedSignalNeedsScroll() {
@@ -612,6 +1008,48 @@ void drawSignalSubmenu() {
   display.display();
 }
 
+// Original Remote is a loaded button list.
+// It deliberately uses the normal (horizontal) display and stays on this
+// screen after transmitting a button.
+static void drawOriginalRemoteScreen() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextWrap(false);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(3, 8);
+  String title = irExplorer.selectedFile;
+  if (title.endsWith(".ir")) title.remove(title.length() - 3);
+  if (title.length() > 20) title = title.substring(0, 20);
+  display.print(title);
+  display.drawFastHLine(0, 11, display.width(), SH110X_WHITE);
+
+  if (irSignalCount == 0) {
+    display.setCursor(3, 31);
+    display.print(F("No buttons"));
+    display.display();
+    return;
+  }
+
+  const byte visible = 4;
+  int start = irSignalIndex - 1;
+  if (start < 0) start = 0;
+  if (start > irSignalCount - visible) start = max(0, irSignalCount - visible);
+  for (byte row = 0; row < visible && start + row < irSignalCount; ++row) {
+    const int idx = start + row;
+    const int y = 21 + row * 11;
+    if (idx == irSignalIndex) {
+      display.fillRect(0, y - 8, display.width(), 11, SH110X_WHITE);
+      display.setTextColor(SH110X_BLACK);
+    }
+    String label = irSignalList[idx];
+    if (label.length() > 20) label = label.substring(0, 20);
+    display.setCursor(4, y);
+    display.print(label);
+    display.setTextColor(SH110X_WHITE);
+  }
+  display.display();
+}
+
 
 bool loadIRSignals(String fileName) {
   ensureIrExplorerDir();
@@ -642,7 +1080,7 @@ bool loadIRSignals(String fileName) {
   return true;
 }
 
-bool sendIRSignal(String fileName, int signalIdx) {
+bool sendIRSignal(String fileName, int signalIdx, uint32_t signalOffset = UINT32_MAX) {
   ensureIrExplorerDir();
   File file = SD.open(irExplorer.currentDir + "/" + fileName, FILE_READ);
   if (!file) {
@@ -661,12 +1099,22 @@ bool sendIRSignal(String fileName, int signalIdx) {
   bool parsedMode = false;
   int currentSignal = -1;
 
+  if (signalOffset != UINT32_MAX) {
+    if (!file.seek(signalOffset)) {
+      file.close();
+      Serial.println(F("Failed to seek to IR signal"));
+      return false;
+    }
+    currentSignal = signalIdx - 1;
+  }
+
   String line;
   while (file.available()) {
     line = file.readStringUntil('\n');
     line.trim();
     if (line.startsWith("name:")) {
       currentSignal++;
+      if (currentSignal > signalIdx) break;
     }
     if (currentSignal == signalIdx) {
       if (line.startsWith("type:")) {
@@ -706,6 +1154,37 @@ bool sendIRSignal(String fileName, int signalIdx) {
     return static_cast<uint32_t>(parseHexBytesToUint64LE(str) & 0xFFFFFFFFULL);
   };
 
+  if (parsedMode && protocol.equalsIgnoreCase("Kaseikyo")) {
+    const uint32_t addressValue = parseHexStringToUint32LE(address);
+    const uint16_t commandValue = parseHexStringToUint32LE(command) & 0x3FF;
+    const uint8_t id = (addressValue >> 24) & 0x03;
+    const uint16_t vendor = (addressValue >> 8) & 0xFFFF;
+    const uint8_t genre1 = (addressValue >> 4) & 0x0F;
+    const uint8_t genre2 = addressValue & 0x0F;
+    const uint8_t vendorLow = vendor & 0xFF;
+    const uint8_t vendorHigh = vendor >> 8;
+    const uint8_t vendorParity = ((vendorLow ^ vendorHigh) & 0x0F) ^ ((vendorLow ^ vendorHigh) >> 4);
+    const uint8_t byte2 = (vendorParity & 0x0F) | (genre1 << 4);
+    const uint8_t byte3 = (genre2 & 0x0F) | ((commandValue & 0x0F) << 4);
+    const uint8_t byte4 = (id << 6) | (commandValue >> 4);
+    const uint8_t byte5 = byte2 ^ byte3 ^ byte4;
+    auto reverseByte = [](uint8_t value) -> uint8_t {
+      value = (value & 0xF0) >> 4 | (value & 0x0F) << 4;
+      value = (value & 0xCC) >> 2 | (value & 0x33) << 2;
+      return (value & 0xAA) >> 1 | (value & 0x55) << 1;
+    };
+    // Kaseikyo transmits every byte LSB-first; IRremoteESP8266's
+    // Panasonic sender consumes one 48-bit value MSB-first.
+    const uint64_t kaseikyo = (static_cast<uint64_t>(reverseByte(vendorLow)) << 40) |
+      (static_cast<uint64_t>(reverseByte(vendorHigh)) << 32) |
+      (static_cast<uint64_t>(reverseByte(byte2)) << 24) |
+      (static_cast<uint64_t>(reverseByte(byte3)) << 16) |
+      (static_cast<uint64_t>(reverseByte(byte4)) << 8) |
+      static_cast<uint64_t>(reverseByte(byte5));
+    irsend.sendPanasonic64(kaseikyo, 48);
+    return true;
+  }
+
   if (parsedMode && protocol != "") {
     protocol = normalizeProtocolName(protocol);
     decode_type_t protocolType = strToDecodeType(protocol.c_str());
@@ -726,9 +1205,14 @@ bool sendIRSignal(String fileName, int signalIdx) {
       irsend.sendSAMSUNG(data, 32);
       return true;
       
-    } else if (protocol.equalsIgnoreCase("SONY")) {
+    } else if (protocol.equalsIgnoreCase("SONY") ||
+               protocol.equalsIgnoreCase("SIRC") ||
+               protocol.equalsIgnoreCase("SIRC15") ||
+               protocol.equalsIgnoreCase("SIRC20")) {
       uint32_t sonyCode = 0;
       uint16_t sonyBits = bits > 0 ? bits : 12;
+      if (protocol.equalsIgnoreCase("SIRC15")) sonyBits = 15;
+      if (protocol.equalsIgnoreCase("SIRC20")) sonyBits = 20;
       if (value.length() > 0) {
         sonyCode = parseHexStringToUint32LE(value);
       } else {
@@ -741,7 +1225,9 @@ bool sendIRSignal(String fileName, int signalIdx) {
       irsend.sendSony(sonyCode, sonyBits, 2);
       return true;
       
-    } else if (protocol.equalsIgnoreCase("NEC")) {
+    } else if (protocol.equalsIgnoreCase("NEC") ||
+               protocol.equalsIgnoreCase("NECext") ||
+               protocol.equalsIgnoreCase("NEC42")) {
       uint32_t necCode = 0;
       
       if (value.length() > 0) {
@@ -769,7 +1255,7 @@ bool sendIRSignal(String fileName, int signalIdx) {
       Serial.print(F("Sending NEC code: 0x"));
       Serial.println(necCode, HEX);
       
-      irsend.sendNEC(necCode, 32);
+      irsend.sendNEC(necCode, protocol.equalsIgnoreCase("NEC42") ? 42 : 32);
       return true;
       
     } else if (protocol.equalsIgnoreCase("EPSON")) {
@@ -1039,6 +1525,10 @@ bool saveIRSignal() {
 void handleIRSubmenu() {
   static bool irInitialized = false;
   static unsigned long sendStartTime = 0;
+  static bool universalOkWasDown = false;
+  static bool universalBackWasDown = false;
+  static unsigned long universalOkDownAt = 0;
+  static unsigned long universalBackDownAt = 0;
   static MenuButtonState signalUpHeld;
   static MenuButtonState signalDownHeld;
 
@@ -1051,8 +1541,8 @@ void handleIRSubmenu() {
     buttonBack.setDebounce(50);
     buttonUp.setTimeout(500);
     buttonDown.setTimeout(500);
-    buttonOK.setTimeout(500);
-    buttonBack.setTimeout(500);
+    buttonOK.setTimeout(300);
+    buttonBack.setTimeout(300);
     buttonUp.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
     buttonDown.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
     buttonOK.setClickTimeout(BUTTON_RELEASE_CLICK_MS);
@@ -1081,41 +1571,35 @@ void handleIRSubmenu() {
     return;
   }
 
-  if (irMenuIndex >= IR_MENU_ITEM_COUNT) {
+  if (irMenuIndex >= getIRMenuItemCount()) {
     irMenuIndex = 0;
   }
 
   if (state == IR_SELECTION) {
     static byte lastMenuIndex = 255;
     if (irMenuIndex != lastMenuIndex) {
-      displayIRSelection(irMenuIndex, irMenuIndex == 0 ? irSelectedSignal : "");
+      displayIRSelection(irMenuIndex, irMenuIndex == IR_MENU_SEND ? irSelectedSignal : "");
       lastMenuIndex = irMenuIndex;
       Serial.println(irMenuIndex);
     }
     (void)buttonUp.isClick();
     (void)buttonDown.isClick();
     if (buttonOK.isClick()) {
-      if (irMenuIndex == 2 || irMenuIndex == 3 || irMenuIndex == 4) {
+      if (irMenuIndex == IR_MENU_TV_OFF) {
         switch (irMenuIndex) {
-          case 2: // PJ-OFF
-            state = SENDING_IR;
-            startFixedAttack(pjOffSignals, numPJSignals, F("Starting PJ-OFF IR attack (NEC)"));
-            break;
-          case 3: // AC-OFF
-            state = SENDING_IR;
-            startFixedAttack(acOffSignals, numACSignals, F("Starting AC-OFF IR attack (NEC)"));
-            break;
-          case 4: // TV-OFF
+          case IR_MENU_TV_OFF: // TV-B-GONE
             state = SENDING_IR;
             irAbortRequested = false;
             resetTvbgState();
-            Serial.println(F("Starting TV-OFF attack"));
+            Serial.println(F("Starting TV-B-GONE attack"));
             drawSendingScreen(0);
             break;
         }
-      } else if (irMenuIndex == 0) {
+      } else if (irMenuIndex == IR_MENU_SEND) {
         state = SENDING_IR;
         irAbortRequested = false;
+        irOkReleasePending = false;
+        irBackReleasePending = false;
         customSendLastTime = 0;
         customSendRepeatCount = 0;
         sendStartTime = millis();
@@ -1125,7 +1609,7 @@ void handleIRSubmenu() {
       }
     }
     if (buttonBack.isClick()) {
-      if (irMenuIndex == 0) {
+      if (irMenuIndex == IR_MENU_SEND) {
         state = IR_SIGNAL_SUBMENU;
         display.clearDisplay();
         drawSignalSubmenu();
@@ -1139,7 +1623,7 @@ void handleIRSubmenu() {
     }
   } else if (state == SENDING_IR) {
     unsigned long currentMillis = millis();
-    if (irMenuIndex == 4) {
+    if (irMenuIndex == IR_MENU_TV_OFF) {
       if (isAbortSendPressed()) {
         startInputSuppress();
         state = IR_SELECTION;
@@ -1174,21 +1658,125 @@ void handleIRSubmenu() {
           return;
         }
       }
-    } else if (irMenuIndex == 2 || irMenuIndex == 3) {
-      if (isAbortSendPressed()) {
-        startInputSuppress();
-        state = IR_SELECTION;
-        fixedAttack = {};
-        displayIRSelection(irMenuIndex);
+    } else if (universalActive) {
+      // OK/BACK are actions on the physical release edge. This is shared by
+      // Sending and Paused, so both screens react identically and immediately.
+      const bool okReleased = irOkReleasePending ||
+        irButtonReleased(BUTTON_OK, universalOkWasDown, universalOkDownAt);
+      const bool backReleased = irBackReleasePending ||
+        irButtonReleased(BUTTON_BACK, universalBackWasDown, universalBackDownAt);
+      irOkReleasePending = false;
+      irBackReleasePending = false;
+      const bool backWasConsumed = millis() < universalBackIgnoreUntil;
+      const int progress = universalSignalCount > 0
+        ? map(min<uint16_t>(universalSignalPosition, universalSignalCount), 0, universalSignalCount, 0, 100)
+        : 0;
+      if (universalLoadError) {
+        // An SD load failure is informational only; do not turn OK into
+        // Pause while the error popup is displayed. BACK uses the normal
+        // Sending exit path below.
+        if (backReleased) {
+          state = IR_SIGNAL_SUBMENU;
+          universalLoadError = false;
+          universalSignalCount = 0;
+          universalSignalPosition = 0;
+          universalPaused = false;
+          irSignalIndex = universalSelectedAction;
+          buttonBack.resetStates();
+          buttonOK.resetStates();
+          drawUniversalRemoteScreen();
+        } else {
+          drawUniversalSendingScreen(0);
+        }
         return;
       }
-      if (!handleFixedAttack(currentMillis)) {
-        state = IR_SELECTION;
-        fixedAttack = {};
-        displayIRSelection(irMenuIndex);
+      if (universalPaused) {
+        if (irSignalIsNavButtonPress(BUTTON_UP, signalUpHeld) && universalSignalPosition + 1 < universalSignalCount) {
+          universalSignalPosition++;
+          drawUniversalSendingScreen(
+            map(universalSignalPosition + 1, 0, universalSignalCount, 0, 100));
+        }
+        if (irSignalIsNavButtonPress(BUTTON_DOWN, signalDownHeld) && universalSignalPosition > 0) {
+          universalSignalPosition--;
+          drawUniversalSendingScreen(
+            map(universalSignalPosition + 1, 0, universalSignalCount, 0, 100));
+        }
+        if (okReleased && universalSignalCount > 0 && universalSignalPosition < universalSignalCount) {
+          sendIRSignal(
+            universalRemoteFiles[universalCategory],
+            0,
+            universalSignalOffsets[universalSignalPosition]);
+          drawUniversalSendingScreen(
+            map(universalSignalPosition + 1, 0, universalSignalCount, 0, 100));
+        }
+        if (backReleased && !backWasConsumed) {
+          universalPaused = false;
+          state = SENDING_IR;
+          customSendLastTime = 0;
+          irOkReleasePending = false;
+          irBackReleasePending = false;
+          buttonBack.resetStates();
+          buttonOK.resetStates();
+          startInputSuppress();
+          universalBackIgnoreUntil = millis() + 300;
+          universalBackWasDown = false;
+          universalBackDownAt = 0;
+          drawUniversalSendingScreen(progress);
+        }
         return;
       }
-    } else if (irMenuIndex == 0) {
+      if (backReleased) {
+        state = IR_SIGNAL_SUBMENU;
+        // Consume this BACK release so it cannot be handled again by the
+        // signal submenu on the next loop iteration.
+        buttonBack.resetStates();
+        buttonOK.resetStates();
+        buttonUp.resetStates();
+        buttonDown.resetStates();
+        signalUpHeld.wasPressed = false;
+        signalUpHeld.nextRepeatAt = 0;
+        signalDownHeld.wasPressed = false;
+        signalDownHeld.nextRepeatAt = 0;
+        universalSignalPosition = 0;
+        universalSignalCount = 0;
+        universalPaused = false;
+        irSignalIndex = universalSelectedAction;
+        drawUniversalRemoteScreen();
+        return;
+      }
+      if (okReleased) {
+        universalPaused = true;
+        if (universalSignalPosition > 0) universalSignalPosition--;
+        drawUniversalSendingScreen(
+          map(universalSignalPosition + 1, 0, universalSignalCount, 0, 100));
+        return;
+      }
+      if (universalSignalPosition >= universalSignalCount) {
+        state = IR_SIGNAL_SUBMENU;
+        buttonUp.resetStates();
+        buttonDown.resetStates();
+        signalUpHeld.wasPressed = false;
+        signalUpHeld.nextRepeatAt = 0;
+        signalDownHeld.wasPressed = false;
+        signalDownHeld.nextRepeatAt = 0;
+        universalSignalPosition = 0;
+        universalSignalCount = 0;
+        universalPaused = false;
+        irSignalIndex = universalSelectedAction;
+        drawUniversalRemoteScreen();
+        return;
+      }
+      if (currentMillis - customSendLastTime >= CUSTOM_SEND_REPEAT_DELAY_MS || customSendLastTime == 0) {
+        customSendLastTime = currentMillis;
+        const bool sent = sendIRSignal(
+              universalRemoteFiles[universalCategory],
+              0,
+              universalSignalOffsets[universalSignalPosition]);
+        if (!sent) Serial.println(F("Skipping unsupported universal IR record"));
+        universalSignalPosition++;
+        drawUniversalSendingScreen(map(universalSignalPosition, 0, universalSignalCount, 0, 100));
+      }
+    } else if (irMenuIndex == IR_MENU_SEND) {
       if (buttonBack.isClick()) {
         state = IR_SELECTION;
         customSendRepeatCount = 0;
@@ -1234,42 +1822,157 @@ void handleIRSubmenu() {
       }
     }
   } else if (state == IR_SIGNAL_SUBMENU) {
+    if (universalActive && millis() < universalBackIgnoreUntil) {
+      (void)buttonBack.isClick();
+      (void)buttonOK.isClick();
+      return;
+    }
     static int lastSignalIndex = -1;
     static unsigned long lastSignalMarqueeDrawAt = 0;
     if (irSignalIndex != lastSignalIndex) {
-      drawSignalSubmenu();
+      if (universalActive) drawUniversalRemoteScreen();
+      else if (irRemoteMode) drawOriginalRemoteScreen();
+      else drawSignalSubmenu();
       lastSignalIndex = irSignalIndex;
       lastSignalMarqueeDrawAt = millis();
     }
-    const bool signalUpPress = irSignalIsNavButtonPress(BUTTON_UP, signalUpHeld) && irSignalCount > 0;
-    const bool signalDownPress = irSignalIsNavButtonPress(BUTTON_DOWN, signalDownHeld) && irSignalCount > 0;
+    const byte signalCount = universalActive ? universalActionCounts[universalCategory] : irSignalCount;
+    // Universal action panels use one-step navigation only. Continuous
+    // navigation is reserved for the Paused progress picker.
+    const bool signalUpPress = (universalActive ? buttonUp.isClick()
+                                                : irSignalIsNavButtonPress(BUTTON_UP, signalUpHeld)) && signalCount > 0;
+    const bool signalDownPress = (universalActive ? buttonDown.isClick()
+                                                  : irSignalIsNavButtonPress(BUTTON_DOWN, signalDownHeld)) && signalCount > 0;
     if (signalUpPress) {
-      irSignalIndex = (irSignalIndex == 0) ? (irSignalCount - 1) : irSignalIndex - 1;
+      irSignalIndex = universalActive
+        ? ((irSignalIndex == signalCount - 1) ? 0 : irSignalIndex + 1)
+        : ((irSignalIndex == 0) ? (signalCount - 1) : irSignalIndex - 1);
     }
     if (signalDownPress) {
-      irSignalIndex = (irSignalIndex == irSignalCount - 1) ? 0 : irSignalIndex + 1;
+      irSignalIndex = universalActive
+        ? ((irSignalIndex == 0) ? (signalCount - 1) : irSignalIndex - 1)
+        : ((irSignalIndex == signalCount - 1) ? 0 : irSignalIndex + 1);
     }
     if (!signalUpPress && !signalDownPress && irSelectedSignalNeedsScroll() &&
         millis() - lastSignalMarqueeDrawAt >= 200) {
       lastSignalMarqueeDrawAt = millis();
-      drawSignalSubmenu();
+      if (universalActive) drawUniversalRemoteScreen();
+      else if (irRemoteMode) drawOriginalRemoteScreen();
+      else drawSignalSubmenu();
     }
-    if (buttonOK.isClick() && irSignalCount > 0) {
-      irSelectedSignal = irSignalList[irSignalIndex];
-      state = IR_SELECTION;
-      displayIRSelection(irMenuIndex, irSelectedSignal);
+    if (buttonOK.isClick() && signalCount > 0) {
+      irSelectedSignal = universalActive ? universalActions[universalCategory][irSignalIndex] : irSignalList[irSignalIndex];
+      if (universalActive) {
+        universalSelectedAction = irSignalIndex;
+        // Enter the progress view first. SD indexing then happens while the
+        // operation is already visibly at 0%, instead of appearing frozen in
+        // the action menu.
+        state = SENDING_IR;
+        irAbortRequested = false;
+        irOkReleasePending = false;
+        irBackReleasePending = false;
+        customSendLastTime = 0;
+        universalPaused = false;
+        drawUniversalSendingScreen(0);
+        if (collectUniversalSignalIndices(irSelectedSignal)) {
+          // The first loop iteration starts transmission immediately after
+          // the SD index has been prepared.
+          // Ignore button releases that happened while the loading scan was
+          // in progress; loading itself never has Pause semantics.
+          irOkReleasePending = false;
+          irBackReleasePending = false;
+        } else {
+          if (universalLoadCanceled) {
+            state = IR_SIGNAL_SUBMENU;
+            universalSignalCount = 0;
+            universalSignalPosition = 0;
+            universalPaused = false;
+            irSignalIndex = universalSelectedAction;
+            buttonBack.resetStates();
+            buttonOK.resetStates();
+            drawUniversalRemoteScreen();
+            return;
+          }
+          // Keep the progress popup visible and report the SD load failure.
+          universalLoadError = true;
+          universalPaused = false;
+          drawUniversalSendingScreen(0);
+        }
+      } else if (irRemoteMode) {
+        if (sendIRSignal(irExplorer.selectedFile, irSignalIndex)) {
+          Serial.print(F("Remote button sent: "));
+          Serial.println(irSelectedSignal);
+        }
+        drawOriginalRemoteScreen();
+      } else {
+        state = IR_SELECTION;
+        displayIRSelection(irMenuIndex, irSelectedSignal);
+      }
       Serial.print(F("Selected signal: "));
       Serial.println(irSelectedSignal);
     }
     if (buttonBack.isClick()) {
-      state = IR_FILE_EXPLORER;
-      irSignalCount = 0;
-      irSignalIndex = 0;
-      irSelectedSignal = "";
-      display.clearDisplay();
-      ExplorerDraw(irExplorer, display);
+      if (universalActive) {
+        universalActive = false;
+        irSignalCount = 0;
+        // Return to the category that opened this remote.
+        irSignalIndex = universalCategory;
+        state = IR_UNIVERSAL_MENU;
+        if (submenu == 1) displayUniversalRemoteMenu();
+        else displayOriginalRemoteMenu();
+      } else {
+        state = IR_FILE_EXPLORER;
+        irSignalCount = 0;
+        irSignalIndex = 0;
+        irSelectedSignal = "";
+        display.clearDisplay();
+        ExplorerDraw(irExplorer, display);
+      }
     }
     yield();
+  } else if (state == IR_UNIVERSAL_MENU) {
+    static MenuButtonState universalUpHeld;
+    static MenuButtonState universalDownHeld;
+    if (isMenuButtonPress(BUTTON_UP, universalUpHeld, getMenuSubmenuRepeatDelay(true))) {
+      const byte previousIndex = irSignalIndex;
+      irSignalIndex = (irSignalIndex + UNIVERSAL_REMOTE_ITEM_COUNT - 1) % UNIVERSAL_REMOTE_ITEM_COUNT;
+      drawCategoryMenu(previousIndex);
+    }
+    if (isMenuButtonPress(BUTTON_DOWN, universalDownHeld, getMenuSubmenuRepeatDelay(true))) {
+      const byte previousIndex = irSignalIndex;
+      irSignalIndex = (irSignalIndex + 1) % UNIVERSAL_REMOTE_ITEM_COUNT;
+      drawCategoryMenu(previousIndex);
+    }
+    if (buttonOK.isClick()) {
+      universalCategory = irSignalIndex;
+      universalActive = true;
+      irSignalIndex = 0;
+    // Names are already part of the universal layout. Do not scan SD
+      // just to enter the remote screen; SD is touched only when transmitting.
+      irExplorer.currentDir = "/infrared/assets";
+      irExplorer.selectedFile = universalRemoteFiles[universalCategory];
+      irSignalCount = universalActionCounts[universalCategory];
+      for (byte i = 0; i < irSignalCount; ++i) {
+        irSignalList[i] = universalActions[universalCategory][i];
+      }
+      // Do not carry the category-menu DOWN event into the first action
+      // screen. Otherwise the new remote opens on its last action.
+      buttonUp.resetStates();
+      buttonDown.resetStates();
+      signalUpHeld.wasPressed = false;
+      signalUpHeld.nextRepeatAt = 0;
+      signalDownHeld.wasPressed = false;
+      signalDownHeld.nextRepeatAt = 0;
+      state = IR_SIGNAL_SUBMENU;
+      drawUniversalRemoteScreen();
+    }
+    if (buttonBack.isClick()) {
+      inIRMenu = true;
+      setUniversalPortrait(false);
+      state = MENU;
+      displayIRMenu(display, irMenuIndex);
+      display.display();
+    }
   } else if (state == IR_FILE_EXPLORER) {
     ExplorerAction action = ExplorerHandle(
       irExplorer,
@@ -1287,7 +1990,8 @@ void handleIRSubmenu() {
       if (loadIRSignals(irExplorer.selectedFile)) {
         state = IR_SIGNAL_SUBMENU;
         display.clearDisplay();
-        drawSignalSubmenu();
+        if (irRemoteMode) drawOriginalRemoteScreen();
+        else drawSignalSubmenu();
         Serial.print(F("Selected IR file: "));
         Serial.println(irExplorer.selectedFile);
       } else {
@@ -1345,6 +2049,7 @@ void handleIRSubmenu() {
       }
     }
     if (buttonBack.isClick()) {
+      setUniversalPortrait(false);
       startInputSuppress();
       inIRMenu = true;
       state = MENU;
@@ -1374,22 +2079,22 @@ void handleIRSubmenu() {
       display.display();
       lastMenuIndex = irMenuIndex;
     }
-    const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+    const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
     if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
       byte previousIndex = irMenuIndex;
-      irMenuIndex = (irMenuIndex - 1 + IR_MENU_ITEM_COUNT) % IR_MENU_ITEM_COUNT;
+      irMenuIndex = (irMenuIndex - 1 + getIRMenuItemCount()) % getIRMenuItemCount();
       displayIRMenu(display, irMenuIndex, previousIndex);
       lastMenuIndex = irMenuIndex;
     }
     if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
       byte previousIndex = irMenuIndex;
-      irMenuIndex = (irMenuIndex + 1) % IR_MENU_ITEM_COUNT;
+      irMenuIndex = (irMenuIndex + 1) % getIRMenuItemCount();
       displayIRMenu(display, irMenuIndex, previousIndex);
       lastMenuIndex = irMenuIndex;
     }
     if (buttonOK.isClick()) {
       switch (irMenuIndex) {
-        case 0: // IR-Send
+      case IR_MENU_SEND: // Send
           if (!ensureSDReadyInteractive(true)) {
             displayIRMenu(display, irMenuIndex);
             display.display();
@@ -1400,8 +2105,25 @@ void handleIRSubmenu() {
           ExplorerLoad(irExplorer, irExplorerCfg);
           display.clearDisplay();
           ExplorerDraw(irExplorer, display);
+          irRemoteMode = false;
           break;
-        case 1: // IR-Read
+        case IR_MENU_REMOTE: // Remote / Universal Remote
+          // Both interfaces use the same SD-backed universal remote data.
+          // Only their category/action selector presentation differs; there
+          // is no file browser in either Remote entry point.
+          if (!ensureSDReadyInteractive(true)) {
+            displayIRMenu(display, irMenuIndex);
+            display.display();
+            break;
+          }
+          // The selected asset is opened lazily only when a button is
+          // transmitted; no file browser is shown.
+          irRemoteMode = false;
+          state = IR_UNIVERSAL_MENU;
+          irSignalIndex = 0;
+        drawCategoryMenu();
+          break;
+        case IR_MENU_READ: // IR-Read
           if (!ensureSDReadyInteractive(true)) {
             displayIRMenu(display, irMenuIndex);
             display.display();
@@ -1414,9 +2136,7 @@ void handleIRSubmenu() {
           display.clearDisplay();
           drawReadingScreen();
           break;
-        case 2:
-        case 3:
-        case 4:
+        case IR_MENU_TV_OFF: // TV-B-GONE
           state = IR_SELECTION;
           display.clearDisplay();
           displayIRSelection(irMenuIndex);

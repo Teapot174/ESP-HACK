@@ -1,7 +1,7 @@
 #include "subghz.h"
 #include "menu/subghz.h"
 #include "Explorer.h"
-#include "interface.h"
+#include "interface/interface.h"
 #include "display.h"
 #include <SD.h>
 #include <SPI.h>
@@ -375,7 +375,7 @@ void runSubGHz() {
 
     if (menuState == menuMain) {
       byte lastMenuIndex = SUBGHZ_MENU_ITEM_COUNT - 1;
-      const unsigned long repeatDelayMs = getInterfaceSubmenuRepeatDelay(submenu == 1);
+      const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
       if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
         byte previousIndex = menuIndex;
         menuIndex = (menuIndex == 0) ? lastMenuIndex : menuIndex - 1;

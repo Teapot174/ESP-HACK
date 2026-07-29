@@ -3,10 +3,13 @@
 
 #include "display.h"
 #include "CONFIG.h"
-#include "interface.h"
+#include "interface/interface.h"
 
 #define GPIO_MENU_ITEM_COUNT 3
 static const char* gpioMenuItems[] = {"iButton", "NRF24", "PN532"};
+static const SubmenuItems gpioSubmenuItems = {
+  gpioMenuItems, gpioMenuItems, GPIO_MENU_ITEM_COUNT
+};
 
 static const unsigned char PROGMEM image_Scanning_short_bits[] = {
   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -92,7 +95,7 @@ static const unsigned char PROGMEM image_iButtonDolphinSuccess_bits[] = {
 
 
 inline void displayGPIOMenu(DisplayType &display, byte menuIndex, int previousIndex = -1) {
-  displayInterfaceSubmenu(display, gpioMenuItems, GPIO_MENU_ITEM_COUNT, menuIndex, previousIndex);
+  displaySubmenu(display, gpioSubmenuItems, menuIndex, previousIndex);
 }
 
 #endif
