@@ -51,7 +51,8 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 
 - Send  
 - Read  
-- TV, PJ, AC OFF
+- TV-B-Gone
+- Universal Remote
 
 ### GPIO
 
