@@ -1675,6 +1675,11 @@ void handleIRSubmenu() {
         // An SD load failure is informational only; do not turn OK into
         // Pause while the error popup is displayed. BACK uses the normal
         // Sending exit path below.
+        // UP/DOWN are not actions on this popup. Consume their clicks so a
+        // press made while the error is shown cannot navigate the submenu
+        // after BACK returns to it.
+        (void)buttonUp.isClick();
+        (void)buttonDown.isClick();
         if (backReleased) {
           state = IR_SIGNAL_SUBMENU;
           universalLoadError = false;
@@ -1684,6 +1689,12 @@ void handleIRSubmenu() {
           irSignalIndex = universalSelectedAction;
           buttonBack.resetStates();
           buttonOK.resetStates();
+          buttonUp.resetStates();
+          buttonDown.resetStates();
+          signalUpHeld.wasPressed = false;
+          signalUpHeld.nextRepeatAt = 0;
+          signalDownHeld.wasPressed = false;
+          signalDownHeld.nextRepeatAt = 0;
           drawUniversalRemoteScreen();
         } else {
           drawUniversalSendingScreen(0);
