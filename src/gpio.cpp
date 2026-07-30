@@ -850,6 +850,51 @@ void displayIButtonMenu(int previousIndex = -1) {
   displaySubmenu(display, iButtonMenuItems, IBUTTON_MENU_ITEM_COUNT, iButtonMenuIndex, previousIndex);
 }
 
+struct IButtonMarqueeState {
+  String text;
+  unsigned long startedAt = 0;
+};
+
+static void printIButtonMarquee(const String& value, int16_t x, int16_t y,
+                                IButtonMarqueeState& state) {
+  const int visibleChars = 15;
+  if (value.length() <= visibleChars) {
+    state.text = "";
+    state.startedAt = 0;
+    display.setCursor(x, y);
+    display.print(value);
+    return;
+  }
+
+  if (state.text != value) {
+    state.text = value;
+    state.startedAt = millis();
+  }
+
+  String marquee = value + F("   ");
+  int maxOffset = marquee.length() - visibleChars;
+  int offset = 0;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - state.startedAt;
+  if (elapsed >= initialPauseMs) {
+    unsigned long scrollDuration = static_cast<unsigned long>(maxOffset) * stepMs;
+    unsigned long cycleDuration = scrollDuration + loopPauseMs + scrollDuration + loopPauseMs;
+    unsigned long cyclePosition = (elapsed - initialPauseMs) % cycleDuration;
+    if (cyclePosition < scrollDuration) {
+      offset = cyclePosition / stepMs;
+    } else if (cyclePosition < scrollDuration + loopPauseMs) {
+      offset = maxOffset;
+    } else if (cyclePosition < scrollDuration + loopPauseMs + scrollDuration) {
+      offset = maxOffset - ((cyclePosition - scrollDuration - loopPauseMs) / stepMs);
+    }
+  }
+
+  display.setCursor(x, y);
+  display.print(marquee.substring(offset, offset + visibleChars));
+}
+
 void displayIButtonReadWaiting() {
   display.clearDisplay();
   display.setTextSize(1);
@@ -868,6 +913,7 @@ void displayIButtonReadWaiting() {
 }
 
 void displayIButtonDetected() {
+  static IButtonMarqueeState codeMarquee;
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(1);
@@ -889,9 +935,8 @@ void displayIButtonDetected() {
   }
 
   String code = formatIButtonCode(iButtonBuffer);
-  if (code.length() > 15) code = code.substring(0, 15);
   display.setCursor(35, 14);
-  display.print(code);
+  printIButtonMarquee(code, 35, 14, codeMarquee);
   display.setCursor(35, 26);
   display.print("0x");
   if (iButtonType < 0x10) display.print("0");
@@ -902,26 +947,27 @@ void displayIButtonDetected() {
 }
 
 void displayIButtonWriteWaiting() {
+  static IButtonMarqueeState fileMarquee;
+  static IButtonMarqueeState codeMarquee;
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(1);
   display.setTextWrap(false);
 
-  String name = iButtonExplorer.selectedFile;
-  if (name.length() > 16) name = name.substring(0, 16);
   display.setCursor(3, 3);
-  display.println("File: " + name);
-  uint8_t dataY = display.getCursorY() + 3;
+  display.print(F("File: "));
+  printIButtonMarquee(iButtonExplorer.selectedFile, 39, 3, fileMarquee);
+  uint8_t dataY = 14;
 
-  String st = "Code: " + formatIButtonCode(iButtonBuffer);
   display.setCursor(3, dataY);
-  display.println(st);
-  st = "Type: " + getIButtonTypeName(iButtonType);
-  dataY = display.getCursorY() + 2;
+  display.print(F("Code: "));
+  printIButtonMarquee(formatIButtonCode(iButtonBuffer), 39, dataY, codeMarquee);
+  dataY = 26;
+  String st = "Type: " + getIButtonTypeName(iButtonType);
   display.setCursor(3, dataY);
   display.println(st);
   st = "Bits: " + String(iButtonBits);
-  dataY = display.getCursorY() + 2;
+  dataY = 38;
   display.setCursor(3, dataY);
   display.println(st);
   display.setCursor(3, 54);
@@ -934,26 +980,28 @@ void displayIButtonWriteWaiting() {
 }
 
 void displayIButtonEmulating() {
+  static IButtonMarqueeState fileMarquee;
+  static IButtonMarqueeState codeMarquee;
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
 
-  String name = iButtonExplorer.selectedFile;
-  if (name.length() > 16) name = name.substring(0, 16);
   display.setCursor(3, 3);
-  display.println("File: " + name);
-  uint8_t dataY = display.getCursorY() + 3;
+  display.print(F("File: "));
+  printIButtonMarquee(iButtonExplorer.selectedFile, 39, 3, fileMarquee);
+  uint8_t dataY = 14;
 
   String code = formatIButtonCode(iButtonBuffer);
   display.setCursor(3, dataY);
-  display.println("Code: " + code);
+  display.print(F("Code: "));
+  printIButtonMarquee(code, 39, dataY, codeMarquee);
+  dataY = 26;
   String st = "Type: " + getIButtonTypeName(iButtonType);
-  dataY = display.getCursorY() + 2;
   display.setCursor(3, dataY);
   display.println(st);
   st = "Bits: " + String(iButtonBits);
-  dataY = display.getCursorY() + 2;
+  dataY = 38;
   display.setCursor(3, dataY);
   display.println(st);
   display.setCursor(3, 54);
@@ -1162,6 +1210,16 @@ void handleIButtonSubmenu() {
   static MenuButtonState readUpHeld;
   static MenuButtonState readDownHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+
+  static unsigned long lastMarqueeDrawAt = 0;
+  if ((iButtonState == IBUTTON_READ_DETECTED || iButtonState == IBUTTON_WRITE_WAIT ||
+       iButtonState == IBUTTON_EMULATE_ACTIVE) &&
+      millis() - lastMarqueeDrawAt >= 200) {
+    lastMarqueeDrawAt = millis();
+    if (iButtonState == IBUTTON_READ_DETECTED) displayIButtonDetected();
+    else if (iButtonState == IBUTTON_WRITE_WAIT) displayIButtonWriteWaiting();
+    else displayIButtonEmulating();
+  }
 
   if (iButtonState == IBUTTON_MENU) {
     const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);

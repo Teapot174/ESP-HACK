@@ -29,6 +29,7 @@ extern byte selectedScript;
 extern void OLED_printMenu(DisplayType &display, byte menuIndex);
 
 void displayBadKBScriptExec(DisplayType &display, const String& filename, const std::vector<String>& logs, int logTop);
+static uint8_t badKbScriptProgress = 0;
 
 static const uint8_t hidReportDescriptor[] = {
   0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
@@ -97,6 +98,7 @@ NimBLECharacteristic* gMouseInput    = nullptr;
 NimBLEAdvertising*    gAdv         = nullptr;
 BLEHidMode            gBleMode     = BLE_HID_NONE;
 std::atomic_bool       gBleSessionActive{false};
+static std::atomic_bool gBleStopping{false};
 BleSubscriberHandles  gKeyboardSubscribers = emptyBleSubscriberHandles();
 BleSubscriberHandles  gMouseSubscribers = emptyBleSubscriberHandles();
 portMUX_TYPE           gBleSubscriptionMux = portMUX_INITIALIZER_UNLOCKED;
@@ -214,7 +216,7 @@ static void startBleAdvertisingIfCapacity() {
 }
 
 static inline void _bb_hidSend(const uint8_t rpt[8]) {
-  if (!gKeyboardInput || !hasBleSubscribers(gKeyboardSubscribers)) return;
+  if (!gKeyboardInput) return;
   gKeyboardInput->setValue((uint8_t*)rpt, 8);
   gKeyboardInput->notify();
   delay(12);
@@ -442,14 +444,15 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
                                bool& aborted) {
   String filenameString(filename);
   aborted = false;
+  badKbScriptProgress = 0;
   if (!gServer || !gKeyboardInput) {
     badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "BLE not initialized");
     Serial.println("[BadKB] BLE not initialized");
     return false;
   }
-  if (!hasBleSubscribers(gKeyboardSubscribers)) {
-    badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "No BLE keyboard");
-    Serial.println("[BadKB] No BLE keyboard subscription");
+  if (gServer->getConnectedCount() == 0) {
+    badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "No BLE connection");
+    Serial.println("[BadKB] No BLE connection");
     return false;
   }
 
@@ -468,6 +471,9 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
     }
 
     String line = file.readStringUntil('\n');
+    if (file.size() > 0) {
+      badKbScriptProgress = min<uint32_t>(100, (file.position() * 100UL) / file.size());
+    }
     line.trim();
     if (line.length() == 0) continue;
 
@@ -536,6 +542,7 @@ static bool _bb_runDuckyScript(const char* filename, std::vector<String>& logs, 
   }
 
   file.close();
+  badKbScriptProgress = 100;
   Serial.println("[BadKB] Script execution completed");
   badKbAppendExecLog(filenameString, logs, display, logTop, followTail, "Done");
   return true;
@@ -597,7 +604,7 @@ class PairServerCallbacks : public NimBLEServerCallbacks {
         reason
     );
     removeBleSubscriptions(handle);
-    startBleAdvertisingIfCapacity();
+    if (!gBleStopping.load()) startBleAdvertisingIfCapacity();
   }
 };
 
@@ -613,22 +620,28 @@ static void resetBleRuntimeState() {
   gAdv = nullptr;
   gBleMode = BLE_HID_NONE;
   gBleSessionActive.store(false);
+  gBleStopping.store(false);
   resetBleSubscriptions();
 }
 
 static void disconnectAllBlePeers() {
   if (!gServer) return;
 
-  const std::vector<uint16_t> peerHandles = gServer->getPeerDevices();
-  for (uint16_t handle : peerHandles) {
-    gServer->disconnect(handle);
+  const int peerCount = gServer->getConnectedCount();
+  for (int peerIndex = peerCount - 1; peerIndex >= 0; --peerIndex) {
+    NimBLEConnInfo peerInfo = gServer->getPeerInfo((uint8_t)peerIndex);
+    gServer->disconnect(peerInfo.getConnHandle());
     delay(35);
   }
 }
 
 static void pauseBLE() {
+  gBleStopping.store(true);
   gBleSessionActive.store(false);
-  if (!gBleInited) return;
+  if (!gBleInited) {
+    gBleStopping.store(false);
+    return;
+  }
 
   if (gAdv && gAdv->isAdvertising()) {
     gAdv->stop();
@@ -637,12 +650,26 @@ static void pauseBLE() {
 
   disconnectAllBlePeers();
   resetBleSubscriptions();
+  gBleStopping.store(false);
 }
 
 static void ensureBleHidInited(BLEHidMode mode) {
   (void)mode;
   gBleSessionActive.store(true);
-  if (gBleInited) return;
+  if (gBleInited && NimBLEDevice::isInitialized() && gServer && gAdv) return;
+
+  if (gBleInited || gServer || gHid || gAdv || NimBLEDevice::isInitialized()) {
+    gBleStopping.store(true);
+    NimBLEDevice::deinit(true);
+    gBleInited = false;
+    gServer = nullptr;
+    gHid = nullptr;
+    gKeyboardInput = nullptr;
+    gMouseInput = nullptr;
+    gAdv = nullptr;
+    resetBleSubscriptions();
+    gBleStopping.store(false);
+  }
 
   Serial.println("[BLE Pair] Initializing BLE...");
   NimBLEDevice::init(bleDeviceName);
@@ -692,9 +719,10 @@ static void ensureBleHidInited(BLEHidMode mode) {
 }
 
 static void stopBLE() {
+  gBleStopping.store(true);
   gBleSessionActive.store(false);
 
-  if (!gBleInited && !gServer && !gHid && !gAdv) {
+  if (!gBleInited && !gServer && !gHid && !gAdv && !NimBLEDevice::isInitialized()) {
     resetBleRuntimeState();
     return;
   }
@@ -705,17 +733,14 @@ static void stopBLE() {
     delay(30);
   }
 
+  if (gKeyboardInput) gKeyboardInput->setCallbacks(nullptr);
+  if (gMouseInput) gMouseInput->setCallbacks(nullptr);
   disconnectAllBlePeers();
 
-  if (gHid) {
-    delete gHid;
-    gHid = nullptr;
-    gKeyboardInput = nullptr;
-    gMouseInput = nullptr;
-    delay(20);
-  }
-
-  if (gBleInited) {
+  gHid = nullptr;
+  gKeyboardInput = nullptr;
+  gMouseInput = nullptr;
+  if (NimBLEDevice::isInitialized()) {
     NimBLEDevice::deinit(true);
     delay(120);
   }
@@ -747,7 +772,12 @@ void displayBadKBScriptExec(DisplayType &display, const String& filename, const 
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
   display.setCursor(3, 3);
-  display.println(filename);
+  display.println(F("BadBLE..."));
+  const int16_t separatorY = display.getCursorY() - 1;
+  String progress = String(badKbScriptProgress) + F("%");
+  display.setCursor(126 - progress.length() * 6, 3);
+  display.print(progress);
+  display.setCursor(1, separatorY);
   display.println(F("---------------------"));
 
   int maxLogs = (display.height() - 20) / 10;
@@ -824,15 +854,17 @@ void displayBLESpamHeader(const char* spamType, bool running) {
   display.setCursor(3, 3);
   if (running) {
     display.println(String(getBLESpamHeaderName(spamType)) + "...");
+    display.setCursor(1, display.getCursorY() - 1);
     display.println(F("---------------------"));
   } else {
     display.println(F("Press OK."));
+    display.setCursor(1, display.getCursorY() - 1);
     display.println(F("---------------------"));
   }
   const int16_t contentY = display.getCursorY();
-  display.setCursor(96, 3);
-  display.print(spamIntervalMs);
-  display.print(F("ms"));
+  String interval = String(spamIntervalMs) + F("ms");
+  display.setCursor(126 - interval.length() * 6, 3);
+  display.print(interval);
   display.setCursor(0, contentY);
 }
 
@@ -873,11 +905,11 @@ static void displayMousePairScreen(bool connected, bool ready, const char* error
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
   display.setCursor(3, 3);
-  display.println(F("Mouse"));
+  display.print(F("Mouse"));
   display.setCursor(1, 10);
-  display.println(F("---------------------"));
+  display.print(F("---------------------"));
 
-  display.setCursor(1, 18);
+  display.setCursor(3, 18);
   if (!connected) display.print(F("Waiting for Pair..."));
   else if (!ready) display.print(F("Connecting..."));
   else display.print(F("Connected"));
@@ -911,32 +943,32 @@ static void drawMouseConfigFrame(uint8_t selection, uint8_t powerIndex, uint8_t 
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
   display.setCursor(3, 3);
-  display.println(F("Mouse"));
+  display.print(F("Mouse"));
   display.setCursor(1, 10);
-  display.println(F("---------------------"));
+  display.print(F("---------------------"));
 
   if (errorText && errorText[0] != '\0') {
     display.setCursor(1, 18);
     display.print(errorText);
   }
 
-  display.setCursor(labelX, 22);
+  display.setCursor(labelX, 20);
   display.print(F("Power:"));
-  display.setCursor(valueX, 22);
+  display.setCursor(valueX, 20);
   display.print(mousePowerValues[powerIndex]);
   display.println(F("%"));
 
-  display.setCursor(labelX, 30);
+  display.setCursor(labelX, 28);
   display.print(F("Speed:"));
-  display.setCursor(valueX, 30);
+  display.setCursor(valueX, 28);
   display.print(mouseSpeedValues[speedIndex]);
   display.println(F("%"));
 
-  display.setCursor(labelX, 38);
+  display.setCursor(labelX, 36);
   display.print(F("Mode: "));
   display.println(mouseModeLabels[modeIndex]);
 
-  display.setCursor(labelX, 50);
+  display.setCursor(labelX, 48);
   display.println(running ? F("Stop") : F("Start"));
   display.setCursor(6, arrowY);
   display.print(F(">"));
@@ -1044,7 +1076,7 @@ void handleBluetoothSubmenu() {
         }
 
         const uint32_t connectionTimeout = 30000;
-        if (!hasBleSubscribers(gKeyboardSubscribers) &&
+        if ((!gServer || gServer->getConnectedCount() == 0) &&
             !badKbPumpExecInput(selectedFile, execLogs, display, execLogTop,
                                 execFollowTail, badBleBackReleaseState,
                                 badBleLogUpState, badBleLogDownState)) {
@@ -1066,7 +1098,7 @@ void handleBluetoothSubmenu() {
           drawBadKBExplorer(display);
           return;
         }
-        if (hasBleSubscribers(gKeyboardSubscribers)) {
+        if (gServer && gServer->getConnectedCount() > 0) {
           waitingForConnection = false;
           waitStartTime = 0;
           if (!badKbResponsiveDelay(3000, selectedFile, execLogs, display, execLogTop,
@@ -1222,6 +1254,7 @@ void handleBluetoothSubmenu() {
       if (!scriptWasRunningThisPass && buttonOK.isClick() && scriptDone) {
         scriptRunning = true;
         scriptDone = false;
+        badKbScriptProgress = 0;
         waitingForConnection = false;
         waitStartTime = 0;
         execLogTop = 0;
@@ -1245,6 +1278,7 @@ void handleBluetoothSubmenu() {
         scriptSelected = true;
         scriptRunning = true;
         scriptDone = false;
+        badKbScriptProgress = 0;
         waitingForConnection = false;
         waitStartTime = 0;
         execLogs.clear();
@@ -1530,6 +1564,9 @@ void handleBluetoothSubmenu() {
           displayMousePairScreen(false, false, "");
           Serial.println(F("[Mouse] Entered Mouse menu"));
         } else {
+          if (gBleInited) {
+            stopBLE();
+          }
           inSpamMenu = true;
           spamMenuIndex = 0;
           bleSpamState = IDLE;

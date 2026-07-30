@@ -918,6 +918,54 @@ static bool irSelectedSignalNeedsScroll() {
          irSignalList[irSignalIndex].length() > 20;
 }
 
+static bool irFileNameNeedsScroll() {
+  return irExplorer.selectedFile.length() > 20;
+}
+
+static void printIrFileName(const String& name, int16_t x, int16_t y) {
+  static String marqueeText = "";
+  static unsigned long marqueeStartedAt = 0;
+
+  const int visibleChars = 20;
+  if (name.length() <= visibleChars) {
+    marqueeText = "";
+    marqueeStartedAt = 0;
+    display.setCursor(x, y);
+    display.print(name);
+    return;
+  }
+
+  if (marqueeText != name) {
+    marqueeText = name;
+    marqueeStartedAt = millis();
+  }
+
+  String marquee = name + F("   ");
+  int maxOffset = marquee.length() - visibleChars;
+  if (maxOffset < 0) maxOffset = 0;
+
+  int offset = 0;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - marqueeStartedAt;
+  if (elapsed >= initialPauseMs) {
+    unsigned long scrollDuration = static_cast<unsigned long>(maxOffset) * stepMs;
+    unsigned long cycleDuration = scrollDuration + loopPauseMs + scrollDuration + loopPauseMs;
+    unsigned long cyclePosition = (elapsed - initialPauseMs) % cycleDuration;
+    if (cyclePosition < scrollDuration) {
+      offset = cyclePosition / stepMs;
+    } else if (cyclePosition < scrollDuration + loopPauseMs) {
+      offset = maxOffset;
+    } else if (cyclePosition < scrollDuration + loopPauseMs + scrollDuration) {
+      offset = maxOffset - ((cyclePosition - scrollDuration - loopPauseMs) / stepMs);
+    }
+  }
+
+  display.setCursor(x, y);
+  display.print(marquee.substring(offset, offset + visibleChars));
+}
+
 static void printIrSignalName(const String& name, int16_t x, int16_t y, bool selected) {
   static String marqueeText = "";
   static unsigned long marqueeStartedAt = 0;
@@ -971,9 +1019,7 @@ void drawSignalSubmenu() {
   display.setTextColor(SH110X_WHITE);
 
   display.setCursor(3, 3);
-  String name = irExplorer.selectedFile;
-  if (name.length() > 16) name = name.substring(0, 16);
-  display.print(name);
+  printIrFileName(irExplorer.selectedFile, 3, 3);
   display.setCursor(1, 10);
   display.println(F("---------------------"));
 
@@ -1019,8 +1065,7 @@ static void drawOriginalRemoteScreen() {
   display.setCursor(3, 8);
   String title = irExplorer.selectedFile;
   if (title.endsWith(".ir")) title.remove(title.length() - 3);
-  if (title.length() > 20) title = title.substring(0, 20);
-  display.print(title);
+  printIrFileName(title, 3, 8);
   display.drawFastHLine(0, 11, display.width(), SH110X_WHITE);
 
   if (irSignalCount == 0) {
@@ -1864,7 +1909,8 @@ void handleIRSubmenu() {
         ? ((irSignalIndex == 0) ? (signalCount - 1) : irSignalIndex - 1)
         : ((irSignalIndex == signalCount - 1) ? 0 : irSignalIndex + 1);
     }
-    if (!signalUpPress && !signalDownPress && irSelectedSignalNeedsScroll() &&
+    if (!signalUpPress && !signalDownPress &&
+        (irSelectedSignalNeedsScroll() || irFileNameNeedsScroll()) &&
         millis() - lastSignalMarqueeDrawAt >= 200) {
       lastSignalMarqueeDrawAt = millis();
       if (universalActive) drawUniversalRemoteScreen();

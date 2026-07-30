@@ -179,6 +179,7 @@ bool rawPlaybackActive = false;
 bool rawPlaybackStopRequestedFlag = false;
 bool rawPlaybackOkWasPressed = false;
 bool rawPlaybackBackWasPressed = false;
+unsigned long rawPlaybackBackPressedAt = 0;
 bool rawPlaybackIgnoreOkRelease = false;
 bool rawPlaybackIgnoreBackRelease = false;
 float rawPlaybackShownPct = 0.0f;
@@ -211,6 +212,8 @@ void drawRawRecorderButton();
 void drawRawRecorderSpectrum(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
 void resetRawRecorderSpectrum();
 void stepRawRecorderRssiThreshold();
+static bool subGHzFileNameNeedsScroll(const String& fileName);
+static void subGHzPrintFileName(DisplayType& display, const String& fileName, int16_t x, int16_t y);
 void OLED_printKey(tpKeyData* kd, String fileName = "", bool isSending = false);
 void OLED_printError(String st, bool err = true);
 void OLED_printCC1101InitError();
@@ -678,15 +681,22 @@ void runSubGHz() {
 
       bool okClick = !transmitIgnoreOkRelease && buttonOK.isClick();
       bool backClick = !transmitIgnoreBackRelease && buttonBack.isClick();
+      static unsigned long lastKeyMarqueeDrawAt = 0;
 
       if (okClick) {
         sendSynthKey(&keyData1);
         restoreReceiveMode();
+        lastKeyMarqueeDrawAt = millis();
       }
       if (backClick) {
         subExplorer.inExplorer = true;
         resetButtonStates();
         ExplorerDraw(subExplorer, display);
+      }
+      if (!okClick && !backClick && subGHzFileNameNeedsScroll(subExplorer.selectedFile) &&
+          millis() - lastKeyMarqueeDrawAt >= 200) {
+        lastKeyMarqueeDrawAt = millis();
+        OLED_printKey(&keyData1, subExplorer.selectedFile);
       }
     } else if (menuState == menuBruteforce) {
       if (buttonOK.isHolded()) {
@@ -1107,6 +1117,54 @@ void stepRawRecorderRssiThreshold() {
   }
 }
 
+static bool subGHzFileNameNeedsScroll(const String& fileName) {
+  return fileName.length() > 15;
+}
+
+static void subGHzPrintFileName(DisplayType& display, const String& fileName, int16_t x, int16_t y) {
+  static String marqueeText = "";
+  static unsigned long marqueeStartedAt = 0;
+
+  const int visibleChars = 15;
+  if (fileName.length() <= visibleChars) {
+    marqueeText = "";
+    marqueeStartedAt = 0;
+    display.setCursor(x, y);
+    display.print(fileName);
+    return;
+  }
+
+  if (marqueeText != fileName) {
+    marqueeText = fileName;
+    marqueeStartedAt = millis();
+  }
+
+  String marquee = fileName + F("   ");
+  int maxOffset = marquee.length() - visibleChars;
+  if (maxOffset < 0) maxOffset = 0;
+
+  int offset = 0;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long loopPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - marqueeStartedAt;
+  if (maxOffset > 0 && elapsed >= initialPauseMs) {
+    unsigned long scrollDuration = static_cast<unsigned long>(maxOffset) * stepMs;
+    unsigned long cycleDuration = scrollDuration + loopPauseMs + scrollDuration + loopPauseMs;
+    unsigned long cyclePosition = (elapsed - initialPauseMs) % cycleDuration;
+    if (cyclePosition < scrollDuration) {
+      offset = cyclePosition / stepMs;
+    } else if (cyclePosition < scrollDuration + loopPauseMs) {
+      offset = maxOffset;
+    } else if (cyclePosition < scrollDuration + loopPauseMs + scrollDuration) {
+      offset = maxOffset - ((cyclePosition - scrollDuration - loopPauseMs) / stepMs);
+    }
+  }
+
+  display.setCursor(x, y);
+  display.print(marquee.substring(offset, offset + visibleChars));
+}
+
 void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -1114,11 +1172,10 @@ void OLED_printKey(tpKeyData* kd, String fileName, bool isSending) {
   display.setTextWrap(false);
   uint8_t dataY = 14;
   if (fileName != "") {
-    String st = fileName;
-    if (st.length() > 16) st = st.substring(0, 16);
     display.setCursor(3, 3);
-    display.println("File: " + st);
-    dataY = display.getCursorY() + 3;
+    display.print(F("File: "));
+    subGHzPrintFileName(display, fileName, 39, 3);
+    dataY = 14;
   } else {
     display.setCursor(3, 3);
     display.println("Signal:");
@@ -1683,6 +1740,7 @@ static bool sendRawBlock(const String& block) {
 static void updateRawPlaybackStopFromPins() {
   bool okDown = digitalRead(BUTTON_OK) == LOW;
   bool backDown = digitalRead(BUTTON_BACK) == LOW;
+  unsigned long now = millis();
 
   if (rawPlaybackIgnoreOkRelease) {
     if (!okDown) {
@@ -1695,15 +1753,26 @@ static void updateRawPlaybackStopFromPins() {
   if (rawPlaybackIgnoreBackRelease) {
     if (!backDown) {
       rawPlaybackIgnoreBackRelease = false;
+      rawPlaybackBackWasPressed = false;
+      rawPlaybackBackPressedAt = 0;
     }
   } else if (backDown) {
-    rawPlaybackBackWasPressed = true;
+    if (!rawPlaybackBackWasPressed) {
+      rawPlaybackBackWasPressed = true;
+      rawPlaybackBackPressedAt = now;
+    }
+  }
+
+  if (rawPlaybackOkWasPressed && !okDown) {
     rawPlaybackStopRequestedFlag = true;
   }
 
-  if ((rawPlaybackOkWasPressed && !okDown) ||
-      (rawPlaybackBackWasPressed && !backDown)) {
-    rawPlaybackStopRequestedFlag = true;
+  if (rawPlaybackBackWasPressed && !backDown) {
+    if (now - rawPlaybackBackPressedAt <= BUTTON_RELEASE_CLICK_MS) {
+      rawPlaybackStopRequestedFlag = true;
+    }
+    rawPlaybackBackWasPressed = false;
+    rawPlaybackBackPressedAt = 0;
   }
 }
 
@@ -1865,6 +1934,7 @@ bool playRawRecorderFile(const String& fileName) {
   rawPlaybackStopRequestedFlag = false;
   rawPlaybackOkWasPressed = false;
   rawPlaybackBackWasPressed = false;
+  rawPlaybackBackPressedAt = 0;
   rawPlaybackIgnoreOkRelease = false;
   rawPlaybackIgnoreBackRelease = false;
   rawPlaybackShownPct = 0.0f;
@@ -2044,6 +2114,7 @@ void sendSynthKey(tpKeyData* kd) {
     rawPlaybackStopRequestedFlag = false;
     rawPlaybackOkWasPressed = false;
     rawPlaybackBackWasPressed = false;
+    rawPlaybackBackPressedAt = 0;
     rawPlaybackIgnoreOkRelease = digitalRead(BUTTON_OK) == LOW;
     rawPlaybackIgnoreBackRelease = digitalRead(BUTTON_BACK) == LOW;
     rawPlaybackShownPct = 0.0f;

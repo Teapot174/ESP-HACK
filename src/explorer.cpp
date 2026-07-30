@@ -246,32 +246,38 @@ static bool explorerIsNavButtonPress(uint8_t pin, MenuButtonState& state) {
   return false;
 }
 
-static bool explorerSelectedNameNeedsScroll(const ExplorerState& state) {
-  return state.count > 0 && state.index >= 0 && state.index < state.count &&
-         state.list[state.index].name.length() > 20;
+static bool explorerTextNeedsScroll(const String& text) {
+  return text.length() > 20;
 }
 
-static void explorerPrintEntryName(DisplayType& display, const String& name, int16_t x, int16_t y, bool selected) {
-  static String marqueeText = "";
-  static unsigned long marqueeStartedAt = 0;
+static bool explorerSelectedNameNeedsScroll(const ExplorerState& state) {
+  return state.count > 0 && state.index >= 0 && state.index < state.count &&
+         explorerTextNeedsScroll(state.list[state.index].name);
+}
 
+static bool explorerNeedsMarqueeRedraw(const ExplorerState& state) {
+  return explorerTextNeedsScroll(state.currentDir) || explorerSelectedNameNeedsScroll(state);
+}
+
+static void explorerPrintMarqueeText(DisplayType& display, const String& text, int16_t x, int16_t y,
+                                     bool selected, String& marqueeText, unsigned long& marqueeStartedAt) {
   const int visibleChars = 20;
-  if (!selected || name.length() <= visibleChars) {
+  if (!selected || text.length() <= visibleChars) {
     if (selected) {
       marqueeText = "";
       marqueeStartedAt = 0;
     }
     display.setCursor(x, y);
-    display.print(name.length() > visibleChars ? name.substring(0, visibleChars) : name);
+    display.print(text.length() > visibleChars ? text.substring(0, visibleChars) : text);
     return;
   }
 
-  if (marqueeText != name) {
-    marqueeText = name;
+  if (marqueeText != text) {
+    marqueeText = text;
     marqueeStartedAt = millis();
   }
 
-  String marquee = name + F("   ");
+  String marquee = text + F("   ");
   int maxOffset = marquee.length() - visibleChars;
   if (maxOffset < 0) maxOffset = 0;
 
@@ -295,6 +301,46 @@ static void explorerPrintEntryName(DisplayType& display, const String& name, int
 
   display.setCursor(x, y);
   display.print(marquee.substring(offset, offset + visibleChars));
+}
+
+static void explorerPrintCurrentDir(DisplayType& display, const String& currentDir, int16_t x, int16_t y) {
+  static String marqueeText = "";
+  static unsigned long marqueeStartedAt = 0;
+
+  const int visibleChars = 20;
+  if (currentDir.length() <= visibleChars) {
+    marqueeText = "";
+    marqueeStartedAt = 0;
+    display.setCursor(x, y);
+    display.print(currentDir);
+    return;
+  }
+
+  if (marqueeText != currentDir) {
+    marqueeText = currentDir;
+    marqueeStartedAt = millis();
+  }
+
+  int maxOffset = currentDir.length() - visibleChars;
+  if (maxOffset < 0) maxOffset = 0;
+
+  int offset = 0;
+  const unsigned long initialPauseMs = 400;
+  const unsigned long stepMs = 200;
+  unsigned long elapsed = millis() - marqueeStartedAt;
+  if (elapsed >= initialPauseMs) {
+    offset = (elapsed - initialPauseMs) / stepMs;
+    if (offset > maxOffset) offset = maxOffset;
+  }
+
+  display.setCursor(x, y);
+  display.print(currentDir.substring(offset, offset + visibleChars));
+}
+
+static void explorerPrintEntryName(DisplayType& display, const String& name, int16_t x, int16_t y, bool selected) {
+  static String marqueeText = "";
+  static unsigned long marqueeStartedAt = 0;
+  explorerPrintMarqueeText(display, name, x, y, selected, marqueeText, marqueeStartedAt);
 }
 
 void ExplorerInit(ExplorerState& state, ExplorerEntry* buffer, int bufferSize, const ExplorerConfig& cfg) {
@@ -367,7 +413,7 @@ void ExplorerDraw(const ExplorerState& state, DisplayType& display) {
   display.setTextColor(SH110X_WHITE);
 
   display.setCursor(3, 3);
-  display.print(state.currentDir);
+  explorerPrintCurrentDir(display, state.currentDir, 3, 3);
 
   display.setCursor(1, 10);
   display.println(F("---------------------"));
@@ -527,7 +573,7 @@ ExplorerAction ExplorerHandle(ExplorerState& state, const ExplorerConfig& cfg, D
     lastMarqueeDrawAt = millis();
     ExplorerDraw(state, display);
   }
-  if (!upPress && !downPress && explorerSelectedNameNeedsScroll(state) &&
+  if (!upPress && !downPress && explorerNeedsMarqueeRedraw(state) &&
       millis() - lastMarqueeDrawAt >= 200) {
     lastMarqueeDrawAt = millis();
     ExplorerDraw(state, display);
