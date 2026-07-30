@@ -1415,7 +1415,7 @@ void handleDeauthSubmenu() {
     displayDeauthActive(deauthFloodAll ? String("All Networks") : deauthTargetSsid);
     uint8_t broadcastMAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-    const int firstNetwork = deauthFloodAll ? 0 : deauthMenuIndex - 1;
+    const int firstNetwork = deauthFloodAll ? 0 : deauthMenuIndex;
     const int lastNetwork = deauthFloodAll ? foundNetworks : firstNetwork + 1;
     for (int i = firstNetwork; i < lastNetwork; i++) {
       if (i < 0 || i >= foundNetworks) continue;
