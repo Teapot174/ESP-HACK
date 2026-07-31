@@ -5,7 +5,7 @@
 #include <cstring>
 
 static const char* const wiiMenuLabels[] = {
-  "WiFi", "BLE", "SubGHz", "IR", "GPIO", "Games", "Settings"
+  "WiFi", "BLE", "SubGHz", "Infrared", "GPIO", "Games", "Settings"
 };
 static const int8_t wiiIconXOffsets[] = {0, 1, 0, 0, 0, 0, 0};
 static const int8_t wiiLabelXOffsets[] = {0, 0, 0, 0, 0, 0, 0};
