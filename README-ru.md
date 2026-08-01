@@ -66,7 +66,7 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - Spectrum
 - Config
 
-**PN532**
+**PN532 (soon)**
 - Read
 - Write
 - Emulate
