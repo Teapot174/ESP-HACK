@@ -5,7 +5,7 @@
 #include "CONFIG.h"
 #include "interface/interface.h"
 
-static const char* irMenuItemsOriginal[] = {"Send", "Read", "TV-B-GONE", "Remote"};
+static const char* irMenuItemsOriginal[] = {"Send", "Read", "TV-B-Gone", "Remote"};
 static const char* irMenuItemsList[] = {"Send", "Read", "TV-B-Gone", "Universal Remote"};
 static const SubmenuItems irSubmenuItems = {
   irMenuItemsOriginal, irMenuItemsList, 4

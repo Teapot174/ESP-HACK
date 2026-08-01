@@ -119,7 +119,7 @@ inline void animateThreeItemMenuTransition(DisplayType &display, const char *fro
                                            const char *toNext, bool movingDown) {
   (void)toCurrent;
 
-  const uint8_t steps = 9;
+  const uint8_t steps = 8;
   const uint8_t frameDelayMs = 2;
 
   const int16_t topY = 7;

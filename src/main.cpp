@@ -145,8 +145,6 @@ static bool isMountedSDCardHealthy() {
   if (now - lastSDHealthCheckMs < healthCheckIntervalMs) return true;
   lastSDHealthCheckMs = now;
 
-  // SD.cardType() may remain cached after removal. Re-mounting verifies that
-  // the physical card is still present before a file operation can block.
   SD.end();
   sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
   sdSPI.setFrequency(4000000);
@@ -401,7 +399,6 @@ void clearBootLogoPath() {
 void resetToFactoryDefaults() {
   applyFactoryDefaults();
   clearBootLogoPath();
-  SD.remove(CONFIG_PATH);
   saveConfig();
   resetGPIOConfigToDefaults();
   resetActivityTimer();
@@ -409,6 +406,9 @@ void resetToFactoryDefaults() {
 
 void saveConfig() {
   saveAppearanceConfig();
+}
+
+static void saveSDConfig() {
   SD.remove(CONFIG_PATH);
   File cfg = SD.open(CONFIG_PATH, FILE_WRITE);
   if (!cfg) return;
@@ -498,7 +498,7 @@ void loadConfig() {
   applyColorScheme();
 
   if (!appearanceLoaded || !loaded || !hasWifiName || !hasBleName) {
-    saveConfig();
+    saveSDConfig();
   }
 }
 

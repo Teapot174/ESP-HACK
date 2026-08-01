@@ -17,7 +17,8 @@ unsigned long getListMenuRepeatDelay() {
 }
 
 unsigned long getMenuSubmenuRepeatDelay(bool isListRootSubmenu) {
-  return isListRootSubmenu ? LIST_INTERFACE_SUBMENU_REPEAT_MS : DEFAULT_SUBMENU_REPEAT_MS;
+  (void)isListRootSubmenu;
+  return LIST_INTERFACE_SUBMENU_REPEAT_MS;
 }
 
 // Infrared animation frames, stored locally as raw 14x14 XBM data.
@@ -299,7 +300,7 @@ static void renderListSubmenu(DisplayType& display, const char* const items[],
 void displayListSubmenuImpl(DisplayType& display, const char* const items[], byte itemCount,
                             byte menuIndex, int previousIndex) {
   if (previousIndex >= 0 && previousIndex < itemCount && previousIndex != menuIndex) {
-    const uint8_t steps = 10;
+    const uint8_t steps = 8;
     const int16_t startY = getScrollbarY(display, previousIndex, itemCount);
     const int16_t endY = getScrollbarY(display, menuIndex, itemCount);
     for (uint8_t step = 1; step <= steps; ++step) {
