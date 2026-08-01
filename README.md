@@ -54,6 +54,8 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 - TV-B-Gone
 - Universal Remote
 
+Copy the contents of sdcard.zip to the SD card to make Universal Remote work.
+
 ### GPIO
 
 **iButton**
@@ -82,11 +84,12 @@ Came, Nice, Ansonic, Holtek, Chamberlain
 ### Settings
 - Interface:
 Display Color, Standby time, Menu view, Submenu view, Boot Logo.
-To create a custom logo, [convert the image to a bitmap](https://pixel.hjlabs.in/converter) and upload it as a .txt file to the /bootlogo folder on the SD card.
 - Restart
 - Reset
 - Update from SD
 - About
+
+To create a custom logo, [convert the image to a bitmap](https://pixel.hjlabs.in/converter) and upload it as a .txt file to the /bootlogo folder on the SD card.
 
 ---
 
