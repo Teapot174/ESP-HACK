@@ -474,7 +474,7 @@ void resetWiFiLogNavigation() {
 }
 
 String getCurrentWardrivingFileName() {
-  return "/wifi/captures/Wardriving_" + String(wardrivingFileNumber) + ".txt";
+  return "/wifi/captures/wardriving_" + String(wardrivingFileNumber) + ".txt";
 }
 
 void drawDeauthAttackMenuFrame(byte selectedIndex, int16_t arrowY = -1) {
@@ -921,7 +921,7 @@ void handlePostRequest() {
 }
 
 void createDefaultPortal() {
-  String path = "/wifi/portals/Google.html";
+  String path = "/wifi/portals/google.html";
   if (SD.exists(path)) return;
 
   File file = SD.open(path, FILE_WRITE);
@@ -947,7 +947,7 @@ void startEvilPortal() {
 
   loadPortalCaptureList();
   if (!SD.exists("/wifi/captures")) SD.mkdir("/wifi/captures");
-  while (SD.exists("/wifi/captures/Portal_" + String(portalCaptureFileNumber) + ".txt")) {
+  while (SD.exists("/wifi/captures/portal_" + String(portalCaptureFileNumber) + ".txt")) {
     portalCaptureFileNumber++;
   }
   String portalFileName = "/wifi/captures/Portal_" + String(portalCaptureFileNumber++) + ".txt";

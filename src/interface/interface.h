@@ -210,10 +210,6 @@ bool ensureSDReadyInteractive(bool allowSkip = true);
 inline void OLED_printLogo(DisplayType &display) {
   display.clearDisplay();
   display.drawBitmap(0, 0, image_ESPHACK_bits, 128, 64, 1);
-  display.setTextColor(1);
-  display.setTextWrap(false);
-  display.setCursor(2, 2);
-  display.print(FIRMWARE);
   display.display();
 }
 

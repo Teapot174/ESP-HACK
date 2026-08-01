@@ -106,11 +106,11 @@ bool iButtonCrcOk = false;
 bool iButtonEmulationActive = false;
 bool inGPIOPlaceholder = false;
 
-static const byte PN532_MENU_ITEM_COUNT = 4;
-static const char* pn532MenuItems[] = {"Read", "Write", "Emulate", "Config"};
-bool inPN532Submenu = false;
-bool inPN532Placeholder = false;
-byte pn532MenuIndex = 0;
+static const byte ST25R3916_MENU_ITEM_COUNT = 4;
+static const char* st25r3916MenuItems[] = {"Read", "Write", "Emulate", "Config"};
+bool inST25R3916Submenu = false;
+bool inST25R3916Placeholder = false;
+byte st25r3916MenuIndex = 0;
 
 static const char* iButtonExts[] = {".ibtn"};
 ExplorerEntry iButtonFileList[IBUTTON_MAX_FILES];
@@ -532,7 +532,7 @@ static void stepNRF24BusPin(byte configIndex) {
 void handleNRF24Config() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
-  buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+  buttonBack.tick();
   if (isMenuButtonPress(BUTTON_UP, upHeld)) {
     byte previousIndex = nrf24ConfigIndex;
     nrf24ConfigIndex = (nrf24ConfigIndex - 1 + 5) % 5;
@@ -1037,27 +1037,20 @@ void displayGPIOPlaceholder() {
   display.setTextSize(1);
   display.setCursor(10, 34);
   display.print(F("Coming soon"));
-  display.setCursor(10, 50);
-  display.print(F("Back to return"));
   display.display();
 }
 
-void displayPN532Menu(int previousIndex = -1) {
-  displaySubmenu(display, pn532MenuItems, PN532_MENU_ITEM_COUNT, pn532MenuIndex, previousIndex);
+void displayST25R3916Menu(int previousIndex = -1) {
+  displaySubmenu(display, st25r3916MenuItems, ST25R3916_MENU_ITEM_COUNT, st25r3916MenuIndex, previousIndex);
 }
 
-void displayPN532Placeholder() {
+void displayST25R3916Placeholder() {
   display.clearDisplay();
   display.setTextColor(SH110X_WHITE);
   display.setTextWrap(false);
-  display.setTextSize(2);
-  display.setCursor(10, 8);
-  display.print(pn532MenuItems[pn532MenuIndex]);
   display.setTextSize(1);
-  display.setCursor(10, 34);
-  display.print(F("Coming soon"));
-  display.setCursor(10, 50);
-  display.print(F("Back to return"));
+  display.setCursor(24, 29);
+  display.print("COMING SOON...");
   display.display();
 }
 
@@ -1306,9 +1299,11 @@ void handleIButtonSubmenu() {
       }
       if (saveIButtonToSD()) {
         display.clearDisplay();
-        display.setTextSize(1);
+        display.drawBitmap(16, 6, image_DolphinSaved_bits, 92, 58, SH110X_WHITE);
+        display.setTextColor(SH110X_WHITE);
+        display.setTextWrap(false);
         display.setCursor(6, 16);
-        display.print("Saved");
+        display.print(F("Saved"));
         display.display();
         delay(1000);
       } else {
@@ -1397,21 +1392,16 @@ void handleIButtonSubmenu() {
     bool present = detectIButton();
     if (present && !iButtonWasPresent) {
       bool written = writeIButtonKey();
-      display.clearDisplay();
-      display.setTextColor(1);
-      display.setTextWrap(false);
       if (written) {
-        display.drawBitmap(0, 9, image_iButtonDolphinSuccess_bits, 92, 55, 1);
-        display.setCursor(53, 3);
-        display.print("Successfully");
-        display.setCursor(79, 13);
-        display.print("written");
-      } else {
-        display.setCursor(16, 25);
-        display.print(F("Write failed"));
+        display.clearDisplay();
+        display.drawBitmap(3, 9, image_iButtonDolphinSuccess_bits, 92, 55, SH110X_WHITE);
+        display.setTextColor(SH110X_WHITE);
+        display.setTextWrap(false);
+        display.setCursor(54, 10);
+        display.print(F("Successfully"));
+        display.display();
+        delay(1000);
       }
-      display.display();
-      delay(1000);
       displayIButtonWriteWaiting();
       iButtonWasPresent = true;
     } else if (!present) {
@@ -1433,37 +1423,48 @@ void handleIButtonSubmenu() {
   }
 }
 
-void handlePN532Submenu() {
+void handleST25R3916Submenu() {
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
-  buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
+  buttonBack.tick();
 
-  if (inPN532Placeholder) {
-    if (buttonOK.isClick() || buttonBack.isClick()) {
-      inPN532Placeholder = false;
-      displayPN532Menu();
+  if (inST25R3916Placeholder) {
+    if (buttonBack.isClick()) {
+      inST25R3916Placeholder = false;
+      buttonUp.resetStates();
+      buttonDown.resetStates();
+      buttonOK.resetStates();
+      buttonBack.resetStates();
+      displayST25R3916Menu();
     }
     return;
   }
 
+  buttonUp.tick();
+  buttonDown.tick();
+  buttonOK.tick();
   const unsigned long repeatDelayMs = getMenuSubmenuRepeatDelay(submenu == 1);
   if (isMenuButtonPress(BUTTON_UP, upHeld, repeatDelayMs)) {
-    byte previousIndex = pn532MenuIndex;
-    pn532MenuIndex = (pn532MenuIndex - 1 + PN532_MENU_ITEM_COUNT) % PN532_MENU_ITEM_COUNT;
-    displayPN532Menu(previousIndex);
+    byte previousIndex = st25r3916MenuIndex;
+    st25r3916MenuIndex = (st25r3916MenuIndex - 1 + ST25R3916_MENU_ITEM_COUNT) % ST25R3916_MENU_ITEM_COUNT;
+    displayST25R3916Menu(previousIndex);
   }
   if (isMenuButtonPress(BUTTON_DOWN, downHeld, repeatDelayMs)) {
-    byte previousIndex = pn532MenuIndex;
-    pn532MenuIndex = (pn532MenuIndex + 1) % PN532_MENU_ITEM_COUNT;
-    displayPN532Menu(previousIndex);
+    byte previousIndex = st25r3916MenuIndex;
+    st25r3916MenuIndex = (st25r3916MenuIndex + 1) % ST25R3916_MENU_ITEM_COUNT;
+    displayST25R3916Menu(previousIndex);
   }
   if (buttonOK.isClick()) {
-    inPN532Placeholder = true;
-    displayPN532Placeholder();
+    inST25R3916Placeholder = true;
+    // Do not let the click that opened this screen be reused after Back.
+    buttonOK.resetStates();
+    displayST25R3916Placeholder();
+    return;
   }
   if (buttonBack.isClick()) {
-    inPN532Submenu = false;
-    inPN532Placeholder = false;
+    inST25R3916Submenu = false;
+    inST25R3916Placeholder = false;
+    buttonBack.resetStates();
     displayGPIOMenu(display, gpioMenuIndex);
   }
 }
@@ -1471,7 +1472,7 @@ void handlePN532Submenu() {
 void handleGPIOSubmenu() {
   if (inNRF24Submenu || inNRF24Config || inJammingMenu || inJammingActive || inSpectrumAnalyzer || inNRF24InitError) return handleNRF24Submenu();
   if (inIButtonSubmenu) return handleIButtonSubmenu();
-  if (inPN532Submenu) return handlePN532Submenu();
+  if (inST25R3916Submenu) return handleST25R3916Submenu();
   static MenuButtonState upHeld;
   static MenuButtonState downHeld;
   buttonUp.tick(); buttonDown.tick(); buttonOK.tick(); buttonBack.tick();
@@ -1514,17 +1515,21 @@ void handleGPIOSubmenu() {
         displayNRF24Menu();
         break;
       case 2:
-        inPN532Submenu = true;
-        inPN532Placeholder = false;
-        pn532MenuIndex = 0;
-        displayPN532Menu();
-        break;
+        inST25R3916Submenu = true;
+        inST25R3916Placeholder = false;
+        st25r3916MenuIndex = 0;
+        buttonUp.resetStates();
+        buttonDown.resetStates();
+        buttonOK.resetStates();
+        buttonBack.resetStates();
+        displayST25R3916Menu();
+        return;
     }
   }
   if (buttonBack.isClick()) {
     inGPIOPlaceholder = false;
-    inPN532Submenu = false;
-    inPN532Placeholder = false;
+    inST25R3916Submenu = false;
+    inST25R3916Placeholder = false;
     returnToMainMenu();
     Serial.println(F("Back to main menu"));
   }

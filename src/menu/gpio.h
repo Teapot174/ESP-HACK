@@ -6,7 +6,7 @@
 #include "interface/interface.h"
 
 #define GPIO_MENU_ITEM_COUNT 3
-static const char* gpioMenuItems[] = {"iButton", "NRF24", "PN532"};
+static const char* gpioMenuItems[] = {"iButton", "NRF24", "ST25R3916"};
 static const SubmenuItems gpioSubmenuItems = {
   gpioMenuItems, gpioMenuItems, GPIO_MENU_ITEM_COUNT
 };

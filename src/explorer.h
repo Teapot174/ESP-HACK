@@ -27,6 +27,7 @@ struct ExplorerState {
   String currentDir = "";
   bool inExplorer = false;
   bool inDeleteConfirm = false;
+  bool sdError = false;
   String selectedFile = "";
   MenuButtonState upButtonState;
   MenuButtonState downButtonState;
@@ -40,7 +41,8 @@ enum ExplorerAction {
   EXPLORER_DELETE_PROMPT,
   EXPLORER_DELETED,
   EXPLORER_DELETE_FAILED,
-  EXPLORER_DELETE_CANCEL
+  EXPLORER_DELETE_CANCEL,
+  EXPLORER_SD_ERROR
 };
 
 void ExplorerInit(ExplorerState& state, ExplorerEntry* buffer, int bufferSize, const ExplorerConfig& cfg);

@@ -28,6 +28,8 @@ void saveConfig();
 void loadConfig();
 void resetActivityTimer();
 void applyFactoryDefaults();
+bool OLED_printBootLogo(DisplayType &display);
+void ensureDefaultBootLogoFile();
 
 DisplayType display = DisplayType(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 GButton buttonUp(BUTTON_UP, HIGH_PULL, NORM_OPEN);
@@ -38,6 +40,8 @@ GButton buttonBack(BUTTON_BACK, HIGH_PULL, NORM_OPEN);
 SPIClass sdSPI(HSPI);
 bool sdCardReady = false;
 static bool sdSetupComplete = false;
+static unsigned long lastSDHealthCheckMs = 0;
+static bool sdInitDismissed = false;
 
 const char* menuItems[] = {"WiFi", "Bluetooth", "SubGHz", "Infrared", "GPIO", "Games", "Settings"};
 byte currentMenu = 0;
@@ -73,6 +77,7 @@ const char* DEFAULT_WIFI_PORTAL_NAME = "FREE WIFI";
 const char* DEFAULT_BLE_DEVICE_NAME = "ESP-BLE";
 char wifiPortalName[33] = "FREE WIFI";
 char bleDeviceName[33] = "ESP-BLE";
+char bootLogoPath[ESPHACK_BOOT_LOGO_PATH_SIZE] = "";
 
 unsigned long lastActivityTime = 0;
 byte standbyTimeoutIndex = 2;
@@ -107,6 +112,7 @@ static void onSDCardReady() {
   if (sdSetupComplete) return;
   createSDDirectories();
   loadConfig();
+  ensureDefaultBootLogoFile();
   sdSetupComplete = true;
 }
 
@@ -118,6 +124,37 @@ static bool tryInitSDCard() {
     onSDCardReady();
   }
   return sdCardReady;
+}
+
+static void markSDCardUnavailable() {
+  SD.end();
+  sdCardReady = false;
+  sdSetupComplete = false;
+  lastSDHealthCheckMs = 0;
+}
+
+void invalidateSDCard() {
+  markSDCardUnavailable();
+}
+
+static bool isMountedSDCardHealthy() {
+  if (!sdCardReady) return false;
+
+  const unsigned long now = millis();
+  const unsigned long healthCheckIntervalMs = 250;
+  if (now - lastSDHealthCheckMs < healthCheckIntervalMs) return true;
+  lastSDHealthCheckMs = now;
+
+  // SD.cardType() may remain cached after removal. Re-mounting verifies that
+  // the physical card is still present before a file operation can block.
+  SD.end();
+  sdSPI.begin(SD_CLK, SD_MISO, SD_MOSI);
+  sdSPI.setFrequency(4000000);
+  if (SD.begin(SD_CS, sdSPI)) return true;
+
+  sdCardReady = false;
+  sdSetupComplete = false;
+  return false;
 }
 
 static void fillRoundedSelectionBox(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
@@ -172,15 +209,27 @@ static void drawSDInitErrorScreen(byte selectionIndex) {
   display.display();
 }
 
+void showSDInitErrorScreen() {
+  drawSDInitErrorScreen(0);
+}
+
+bool wasSDInitDismissed() {
+  return sdInitDismissed;
+}
+
 bool ensureSDReadyInteractive(bool allowSkip) {
-  if (sdCardReady) return true;
+  sdInitDismissed = false;
+  if (sdCardReady) {
+    if (isMountedSDCardHealthy()) return true;
+    markSDCardUnavailable();
+  }
 
   buttonUp.resetStates();
   buttonDown.resetStates();
   buttonOK.resetStates();
   buttonBack.resetStates();
 
-  byte selectionIndex = 1;
+  byte selectionIndex = 0;
   bool upWasPressed = false;
   bool downWasPressed = false;
   bool okWasPressed = false;
@@ -221,6 +270,7 @@ bool ensureSDReadyInteractive(bool allowSkip) {
           return true;
         }
       } else if (allowSkip) {
+        sdInitDismissed = true;
         buttonUp.resetStates();
         buttonDown.resetStates();
         buttonOK.resetStates();
@@ -262,7 +312,13 @@ struct AppearanceStorage {
   byte standby;
 };
 
+struct BootLogoStorage {
+  uint32_t signature;
+  char path[ESPHACK_BOOT_LOGO_PATH_SIZE];
+};
+
 static const uint32_t APPEARANCE_STORAGE_SIGNATURE = 0x45535041UL;
+static const uint32_t BOOT_LOGO_STORAGE_SIGNATURE = 0x424C4F47UL;
 static bool appearanceStorageReady = false;
 
 static bool ensureAppearanceStorageReady() {
@@ -305,8 +361,46 @@ static bool loadAppearanceConfig() {
   return true;
 }
 
+bool saveBootLogoPath(const String& path) {
+  if (path.length() == 0 || path.length() >= ESPHACK_BOOT_LOGO_PATH_SIZE ||
+      !ensureAppearanceStorageReady()) {
+    return false;
+  }
+
+  BootLogoStorage stored = {};
+  stored.signature = BOOT_LOGO_STORAGE_SIGNATURE;
+  path.toCharArray(stored.path, sizeof(stored.path));
+  EEPROM.put(ESPHACK_BOOT_LOGO_EEPROM_ADDRESS, stored);
+  if (!EEPROM.commit()) return false;
+  strncpy(bootLogoPath, stored.path, sizeof(bootLogoPath));
+  bootLogoPath[sizeof(bootLogoPath) - 1] = '\0';
+  return true;
+}
+
+void loadBootLogoConfig() {
+  bootLogoPath[0] = '\0';
+  if (!ensureAppearanceStorageReady()) return;
+
+  BootLogoStorage stored = {};
+  EEPROM.get(ESPHACK_BOOT_LOGO_EEPROM_ADDRESS, stored);
+  if (stored.signature != BOOT_LOGO_STORAGE_SIGNATURE) return;
+  stored.path[sizeof(stored.path) - 1] = '\0';
+  if (stored.path[0] != '/') return;
+  strncpy(bootLogoPath, stored.path, sizeof(bootLogoPath));
+  bootLogoPath[sizeof(bootLogoPath) - 1] = '\0';
+}
+
+void clearBootLogoPath() {
+  bootLogoPath[0] = '\0';
+  if (!ensureAppearanceStorageReady()) return;
+  BootLogoStorage stored = {};
+  EEPROM.put(ESPHACK_BOOT_LOGO_EEPROM_ADDRESS, stored);
+  EEPROM.commit();
+}
+
 void resetToFactoryDefaults() {
   applyFactoryDefaults();
+  clearBootLogoPath();
   SD.remove(CONFIG_PATH);
   saveConfig();
   resetGPIOConfigToDefaults();
@@ -547,6 +641,7 @@ void setup() {
   applyFactoryDefaults();
   ensureAppearanceStorageReady();
   loadAppearanceConfig();
+  loadBootLogoConfig();
   applyColorScheme();
   if (!tryInitSDCard()) {
     ensureSDReadyInteractive(true);
@@ -556,7 +651,9 @@ void setup() {
   buttonOK.resetStates();
   buttonBack.resetStates();
 
-  OLED_printLogo(display);
+  if (!OLED_printBootLogo(display)) {
+    OLED_printLogo(display);
+  }
 
   unsigned long logoStart = millis();
   while (millis() - logoStart < 1500) {
