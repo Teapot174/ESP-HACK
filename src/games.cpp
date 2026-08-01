@@ -1627,11 +1627,8 @@ void tetrisCheckLines() {
       : static_cast<uint16_t>(tetrisDropInterval - reduction);
   }
 
-  // Flash with the opposite of the selected theme: white on the dark theme
-  // and black on the white theme.
   display.invertDisplay(::colorSelectionIndex != 0);
   delay(45);
-  // Restore the selected theme.
   display.invertDisplay(::colorSelectionIndex == 0);
 }
 
