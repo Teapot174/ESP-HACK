@@ -158,7 +158,6 @@ Thanks Dripside!
 
 ---
 
-## ✉️ Контакты / Автор
-
-Автор: Teapot174  
-Telegram: `@ESPH4CK`
+## ✉️ Обратная связь (Telegram)
+**Канал:** [**TeapotHub**](https://t.me/TeapotHub)
+**Автор:** [**Teapot174**](https://t.me/teapot174)
