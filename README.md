@@ -158,7 +158,6 @@ During operation ESP-HACK may show the following errors:
 
 ---
 
-## ✉️ Contacts / Author
-
-Author: Teapot174  
-Telegram: `@ESPH4CK`
+## ✉️ Feedback (Telegram)
+**Channel:** [**TeapotHub**](https://t.me/TeapotHub)
+**Author:** [**Teapot174**](https://t.me/teapot174)
