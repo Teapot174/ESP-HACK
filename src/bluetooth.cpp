@@ -1653,6 +1653,9 @@ void handleBluetoothSubmenu() {
             case Samsung:
               currentDeviceName = getSpamDeviceName(currentSpamType, deviceIndex);
               break;
+            case SourApple:
+              currentDeviceName = getSpamDeviceName(currentSpamType, deviceIndex);
+              break;
           }
 
           Spam(currentSpamType, deviceIndex);

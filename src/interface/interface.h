@@ -7,6 +7,7 @@
 #include "menu/pages_menu.h"
 #include "menu/wii_menu.h"
 #include "menu/dsi_menu.h"
+#include "menu/icons_menu.h"
 #include "submenu/submenu.h"
 
 #define MENU_ITEM_COUNT 7
@@ -23,6 +24,8 @@ inline void resetMainMenuAnimation(byte menuIndex) {
     resetWiiMenuAnimation(menuIndex);
   } else if (menu == 3) {
     resetDsiMenuAnimation(menuIndex);
+  } else if (menu == 4) {
+    resetIconsMenuAnimation(menuIndex);
   }
 }
 
@@ -226,6 +229,10 @@ inline void OLED_printMenu(DisplayType &display, byte menuIndex) {
     displayDsiMenu(display, menuIndex);
     return;
   }
+  if (menu == 4) {
+    displayIconsMenu(display, menuIndex);
+    return;
+  }
   displayPagesMenu(display, menuIndex);
 }
 
@@ -240,6 +247,10 @@ inline void OLED_printMenuAnimated(DisplayType &display, byte menuIndex, int pre
   }
   if (menu == 3) {
     displayDsiMenu(display, menuIndex, previousIndex);
+    return;
+  }
+  if (menu == 4) {
+    displayIconsMenu(display, menuIndex, previousIndex);
     return;
   }
   displayPagesMenuAnimated(display, menuIndex, previousIndex);

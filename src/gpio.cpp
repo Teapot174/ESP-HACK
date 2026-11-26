@@ -101,6 +101,9 @@ DS2401* iButtonEmulatedKey = nullptr;
 byte iButtonBuffer[8] = {0};
 byte iButtonType = 0x00;
 uint8_t iButtonBits = 64;
+// 0 — Dallas/RW1990, 1 — Cyfral, 2 — Metakom
+byte iButtonProto = 0;
+byte iButtonDataLen = 8;
 bool iButtonWasPresent = false;
 bool iButtonCrcOk = false;
 bool iButtonEmulationActive = false;
@@ -475,8 +478,8 @@ void startNRFJamming() {
   radio.setAddressWidth(3);
   radio.setPayloadSize(2);
   radio.startConstCarrier(RF24_PA_MAX, 45);
-  byte* channels;
-  byte channel_count;
+  byte* channels = wifi_channels;
+  byte channel_count = sizeof(wifi_channels);
   switch (jammingModeIndex) {
     case 0: channels = wifi_channels; channel_count = sizeof(wifi_channels); Serial.println(F("WiFi jamming")); break;
     case 1: channels = ble_channels; channel_count = sizeof(ble_channels); Serial.println(F("BLE jamming")); break;
@@ -697,13 +700,26 @@ void handleNRF24Submenu() {
   }
 }
 
-String formatIButtonCode(const byte* data) {
-  char code[17];
-  for (int i = 0; i < 8; i++) {
+String formatIButtonCode(const byte* data, byte len) {
+  char code[25];
+  if (len > 8) len = 8;
+  for (int i = 0; i < len; i++) {
     snprintf(code + (i * 2), sizeof(code) - (i * 2), "%02X", data[i]);
   }
-  code[16] = '\0';
+  code[len * 2] = '\0';
   return String(code);
+}
+
+String formatIButtonCode(const byte* data) {
+  return formatIButtonCode(data, iButtonDataLen);
+}
+
+String getIButtonTypeName(byte type);
+
+String iButtonTypeLabel() {
+  if (iButtonProto == 1) return F("Cyfral");
+  if (iButtonProto == 2) return F("Metakom");
+  return getIButtonTypeName(iButtonType);
 }
 
 String getIButtonTypeName(byte type) {
@@ -720,106 +736,526 @@ String getIButtonTypeName(byte type) {
   }
 }
 
+// ==== iButton (1-Wire): собственный драйвер ====
+// Чтение — READ ROM (0x33) с проверкой CRC и повторами.
+// Запись — RW1990: две последовательности, каждая проверяется чтением.
+// Эмуляция — OneWireHub/DS2401 на выбранном пине.
+
+static bool ibRomValid(const byte* rom) {
+  bool allZero = true;
+  bool allFF = true;
+  for (byte i = 0; i < 8; i++) {
+    allZero &= (rom[i] == 0x00);
+    allFF &= (rom[i] == 0xFF);
+  }
+  return !allZero && !allFF && OneWire::crc8((uint8_t*)rom, 7) == rom[7];
+}
+
+static void ibLineIdle() {
+  digitalWrite(iButtonPin, HIGH);
+  pinMode(iButtonPin, INPUT_PULLUP);
+}
+
 void initIButtonWire() {
   byte pin = iButtonPins[iButtonPinIndex];
-  if (iButtonWire == nullptr || iButtonPin != pin) {
-    if (iButtonWire != nullptr) {
-      delete iButtonWire;
-      iButtonWire = nullptr;
-    }
-    iButtonPin = pin;
-    // Release the newly selected line before the first bus reset.  This avoids
-    // interpreting the transition after a pin change as a presence pulse.
-    pinMode(iButtonPin, INPUT_PULLUP);
-    delay(5);
-    iButtonWire = new OneWire(iButtonPin);
+  if (iButtonWire != nullptr && iButtonPin == pin) {
+    ibLineIdle();
+    return;
   }
+  delete iButtonWire;
+  iButtonPin = pin;
+  ibLineIdle();
+  delay(5);
+  iButtonWire = new OneWire(iButtonPin);
 }
 
 bool detectIButton() {
   if (iButtonWire == nullptr) return false;
-  return iButtonWire->reset() != 0;
+  bool present = iButtonWire->reset() != 0;
+  ibLineIdle();
+  return present;
+}
+
+static bool ibReadRom33(byte* out) {
+  if (iButtonWire == nullptr || !iButtonWire->reset()) return false;
+  iButtonWire->skip();
+  iButtonWire->write(0x33);
+  for (byte i = 0; i < 8; i++) out[i] = iButtonWire->read();
+  return true;
+}
+
+static bool ibSearchRom(byte* out) {
+  if (iButtonWire == nullptr) return false;
+  iButtonWire->reset_search();
+  bool found = iButtonWire->search(out);
+  iButtonWire->reset_search();
+  return found;
+}
+
+// Клоны RW1990 отвечают по-разному: одни на 0x33, другие только на поиск.
+static bool readIButtonRaw(byte* out) {
+  if (iButtonWire == nullptr) return false;
+  for (byte attempt = 0; attempt < 3; attempt++) {
+    if (ibReadRom33(out) && ibRomValid(out)) {
+      ibLineIdle();
+      return true;
+    }
+    delay(2);
+    if (ibSearchRom(out) && ibRomValid(out)) {
+      ibLineIdle();
+      return true;
+    }
+    delay(2);
+  }
+  ibLineIdle();
+  return false;
+}
+
+// Без порога валидности: нужно для диагностики на экране.
+static bool readIButtonAny(byte* out) {
+  if (iButtonWire == nullptr) return false;
+  bool anyData = false;
+  if (ibReadRom33(out)) {
+    for (byte i = 0; i < 8; i++) anyData |= (out[i] != 0x00 && out[i] != 0xFF);
+  }
+  if (!anyData && ibSearchRom(out)) {
+    for (byte i = 0; i < 8; i++) anyData |= (out[i] != 0x00 && out[i] != 0xFF);
+  }
+  ibLineIdle();
+  return anyData;
+}
+// ---- Cyfral и Metakom ----
+// Оба протокола самосинхронные: пока на линии есть питание, ключ сам гонит
+// кадры. Период 125 мкс, бит кодируется длительностью уровня (41/83 мкс).
+// Cyfral: бит = низ, затем верх; 1 — короткий низ. Кадр: 0001 + 8 нибблов + 0001.
+// Metakom: бит = верх, затем низ; 1 — длинный верх. Кадр: синхро 125 мкс + 010 + 32 бита.
+
+struct IbEdge {
+  bool level;
+  uint32_t us;
+};
+
+static uint16_t ibCaptureEdges(IbEdge* edges, uint16_t maxEdges, uint32_t windowUs) {
+  uint16_t count = 0;
+  uint32_t startedAt = micros();
+  uint32_t lastAt = startedAt;
+  bool prev = digitalRead(iButtonPin);
+  while (count < maxEdges && (micros() - startedAt) < windowUs) {
+    bool now = digitalRead(iButtonPin);
+    if (now != prev) {
+      uint32_t at = micros();
+      edges[count].level = prev;
+      edges[count].us = at - lastAt;
+      lastAt = at;
+      prev = now;
+      count++;
+    }
+  }
+  return count;
+}
+
+static bool ibDecodeCyfral(const IbEdge* edges, uint16_t count, uint16_t* out) {
+  byte nibble = 0;
+  byte bitIndex = 0;
+  byte nibbles = 0;
+  uint16_t data = 0;
+  bool inFrame = false;
+
+  for (uint16_t i = 0; i + 1 < count; i++) {
+    if (edges[i].level) continue;
+    uint32_t low = edges[i].us;
+    uint32_t high = edges[i + 1].us;
+    i++;
+    if (low < 15 || low > 115 || high < 15 || high > 115) {
+      inFrame = false;
+      nibble = 0;
+      bitIndex = 0;
+      continue;
+    }
+    bool bit = low < high;
+    nibble = (byte)((nibble << 1) | (bit ? 1 : 0));
+    bitIndex++;
+    if (bitIndex < 4) continue;
+    bitIndex = 0;
+    byte value = nibble;
+    nibble = 0;
+
+    if (!inFrame) {
+      if (value == 0b0001) {
+        inFrame = true;
+        nibbles = 0;
+        data = 0;
+      }
+      continue;
+    }
+    if (nibbles < 8) {
+      byte pair;
+      switch (value) {
+        case 0b1110: pair = 0b11; break;
+        case 0b1101: pair = 0b10; break;
+        case 0b1011: pair = 0b01; break;
+        case 0b0111: pair = 0b00; break;
+        default: inFrame = false; continue;
+      }
+      data = (uint16_t)((data << 2) | pair);
+      nibbles++;
+    } else if (value == 0b0001) {
+      *out = data;
+      return true;
+    } else {
+      inFrame = false;
+    }
+  }
+  return false;
+}
+
+static bool ibDecodeMetakom(const IbEdge* edges, uint16_t count, uint32_t* out) {
+  for (uint16_t i = 0; i + 1 < count; i++) {
+    if (edges[i].level) continue;
+    if (edges[i].us < 100 || edges[i].us > 160) continue;
+
+    uint16_t p = (uint16_t)(i + 1);
+    uint32_t start = 0;
+    bool ok = true;
+    for (byte b = 0; b < 3 && ok; b++) {
+      if (p + 1 >= count || !edges[p].level) { ok = false; break; }
+      uint32_t hi = edges[p].us;
+      uint32_t lo = edges[p + 1].us;
+      if (hi < 15 || hi > 115 || lo < 15 || lo > 115) { ok = false; break; }
+      start = (start << 1) | ((hi > lo) ? 1 : 0);
+      p = (uint16_t)(p + 2);
+    }
+    if (!ok || start != 0b010) continue;
+
+    uint32_t data = 0;
+    for (byte b = 0; b < 32 && ok; b++) {
+      if (p + 1 >= count || !edges[p].level) { ok = false; break; }
+      uint32_t hi = edges[p].us;
+      uint32_t lo = edges[p + 1].us;
+      if (hi < 15 || hi > 115 || lo < 15 || lo > 115) { ok = false; break; }
+      data = (data << 1) | ((hi > lo) ? 1 : 0);
+      p = (uint16_t)(p + 2);
+    }
+    if (!ok) continue;
+    *out = data;
+    return true;
+  }
+  return false;
+}
+
+static bool ibReadCyfralKey() {
+  static IbEdge edges[320];
+  uint16_t count = ibCaptureEdges(edges, 320, 25);
+  uint16_t data;
+  if (!ibDecodeCyfral(edges, count, &data)) return false;
+  iButtonBuffer[0] = (byte)(data >> 8);
+  iButtonBuffer[1] = (byte)(data & 0xFF);
+  iButtonProto = 1;
+  iButtonDataLen = 2;
+  iButtonBits = 16;
+  iButtonType = 0;
+  iButtonCrcOk = true;
+  return true;
+}
+
+static bool ibReadMetakomKey() {
+  static IbEdge edges[320];
+  uint16_t count = ibCaptureEdges(edges, 320, 25);
+  uint32_t data;
+  if (!ibDecodeMetakom(edges, count, &data)) return false;
+  for (byte i = 0; i < 4; i++) iButtonBuffer[i] = (byte)(data >> (24 - i * 8));
+  iButtonProto = 2;
+  iButtonDataLen = 4;
+  iButtonBits = 32;
+  iButtonType = 0;
+  iButtonCrcOk = true;
+  return true;
 }
 
 bool readIButtonKey() {
-  if (iButtonWire == nullptr) return false;
-
-  // A floating/noisy line may look like a device during reset and return an
-  // all-zero ROM.  Accept only a complete, CRC-valid ROM from the search.
-  for (byte attempt = 0; attempt < 3; attempt++) {
-    byte address[8];
-    iButtonWire->reset_search();
-    bool found = iButtonWire->search(address);
-    iButtonWire->reset_search();
-    if (!found) continue;
-
-    bool allZero = true;
-    bool allFF = true;
-    for (byte i = 0; i < 8; i++) {
-      allZero &= (address[i] == 0x00);
-      allFF &= (address[i] == 0xFF);
-    }
-    if (allZero || allFF || OneWire::crc8(address, 7) != address[7]) {
-      delay(2);
-      continue;
-    }
-
-    memcpy(iButtonBuffer, address, sizeof(iButtonBuffer));
+  if (iButtonWire != nullptr && readIButtonRaw(iButtonBuffer)) {
+    iButtonProto = 0;
+    iButtonDataLen = 8;
     iButtonType = iButtonBuffer[0];
     iButtonBits = 64;
     iButtonCrcOk = true;
     return true;
   }
-
+  ibLineIdle();
+  if (ibReadCyfralKey()) return true;
+  if (ibReadMetakomKey()) return true;
   iButtonCrcOk = false;
   return false;
 }
 
-static void writeIButtonByteRW1990(byte data) {
-  for (byte bit = 0; bit < 8; bit++) {
-    digitalWrite(iButtonPin, LOW);
-    pinMode(iButtonPin, OUTPUT);
-    delayMicroseconds((data & 1) ? 60 : 10);
-    pinMode(iButtonPin, INPUT);
-    digitalWrite(iButtonPin, HIGH);
-    delay(10);
+static void ibPullLow() {
+  digitalWrite(iButtonPin, LOW);
+  pinMode(iButtonPin, OUTPUT);
+}
+
+static void ibLetGo(bool driveHigh) {
+  digitalWrite(iButtonPin, HIGH);
+  pinMode(iButtonPin, driveHigh ? OUTPUT : INPUT_PULLUP);
+}
+
+// Бит RW1990 кодируется шириной импульса: 1 — 60 мкс, 0 — отпускаем сразу.
+static void ibWriteBit(bool one, bool driveHigh) {
+  ibPullLow();
+  if (one) delayMicroseconds(60);
+  ibLetGo(driveHigh);
+  delay(10);
+}
+
+static void ibWriteByte(byte data, bool driveHigh) {
+  for (byte i = 0; i < 8; i++) {
+    ibWriteBit((data & 1) != 0, driveHigh);
     data >>= 1;
   }
 }
 
-bool writeIButtonKey() {
-  if (iButtonWire == nullptr) return false;
-  byte expected[8];
-  memcpy(expected, iButtonBuffer, sizeof(expected));
+byte iButtonWriteStage = 0;  // 0 — ок, 1 — чип не отвечает, 2 — отвечает, но данные не легли
 
-  // RW1990: unlock writing, transfer the ROM, then lock it again.
+static void ibRw1990Unlock(bool driveHigh) {
   iButtonWire->reset();
   iButtonWire->skip();
   iButtonWire->write(0xD1);
-  digitalWrite(iButtonPin, LOW);
-  pinMode(iButtonPin, OUTPUT);
+  ibPullLow();
   delayMicroseconds(60);
-  pinMode(iButtonPin, INPUT);
-  digitalWrite(iButtonPin, HIGH);
+  ibLetGo(driveHigh);
   delay(10);
+}
 
+static void ibWriteSequence(const byte* rom, byte writeCmd, bool driveHigh) {
   iButtonWire->reset();
   iButtonWire->skip();
-  iButtonWire->write(0xD5);
+  iButtonWire->write(writeCmd);
   for (byte i = 0; i < 8; i++) {
-    writeIButtonByteRW1990(iButtonBuffer[i]);
+    ibWriteByte(rom[i], driveHigh);
+  }
+  iButtonWire->reset();
+  iButtonWire->write(0xD1);
+  ibPullLow();
+  delayMicroseconds(10);
+  ibLetGo(false);
+  delay(20);
+}
+
+// 0x3C (copy scratchpad) по байту; чип обязан вернуть CRC записанного слова.
+static bool ibRw1990Scratchpad(const byte* rom, bool* acked) {
+  *acked = false;
+  byte cmd[4];
+  for (byte i = 0; i < 8; i++) {
+    cmd[0] = 0x3C;
+    cmd[1] = i;
+    cmd[2] = 0x00;
+    cmd[3] = rom[i];
+    iButtonWire->reset();
+    iButtonWire->skip();
+    iButtonWire->write_bytes(cmd, 4);
+    if (iButtonWire->read() != OneWire::crc8(cmd, 4)) {
+      ibLineIdle();
+      return false;
+    }
+    *acked = true;
+    ibLetGo(true);
+    delay(60);
+    digitalWrite(iButtonPin, LOW);
+    delay(5);
+    digitalWrite(iButtonPin, HIGH);
+    delay(50);
+  }
+  ibLineIdle();
+  return true;
+}
+
+// Последовательность из Bruce (src/modules/others/ibutton.cpp, AGPL-3.0):
+// между командами выдерживаются паузы 50 мс. В отличие от оригинала,
+// результат проверяется чтением, а не объявляется успешным сразу.
+static void ibWriteBruce(const byte* rom) {
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0x33);
+
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0x3C);
+  delay(50);
+
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0xD1);
+  delay(50);
+
+  ibPullLow();
+  delayMicroseconds(60);
+  ibLetGo(false);
+  delay(10);
+
+  iButtonWire->skip();
+  iButtonWire->reset();
+  iButtonWire->write(0xD5);
+  delay(50);
+
+  for (byte i = 0; i < 8; i++) {
+    ibWriteByte(rom[i], false);
+    delayMicroseconds(25);
   }
 
   iButtonWire->reset();
+  iButtonWire->skip();
   iButtonWire->write(0xD1);
-  digitalWrite(iButtonPin, LOW);
-  pinMode(iButtonPin, OUTPUT);
-  delayMicroseconds(10);
-  pinMode(iButtonPin, INPUT);
-  digitalWrite(iButtonPin, HIGH);
-  delay(500);
+  delayMicroseconds(16);
+  iButtonWire->reset();
+  ibLineIdle();
+}
 
-  return readIButtonKey() && memcmp(expected, iButtonBuffer, sizeof(expected)) == 0;
+// ---- TM01x: запись Cyfral и Metakom ----
+// Протокол из flipperzero-firmware/lib/ibutton/protocols/blanks/tm01x.c (GPL-3.0).
+// Кадр 36 бит, данные программируются инвертированными, MSB-first, по 5 мс на бит.
+// После проверки болванка финализируется — это необратимо.
+
+static byte ibReverseBits(byte value) {
+  value = (byte)(((value & 0xF0) >> 4) | ((value & 0x0F) << 4));
+  value = (byte)(((value & 0xCC) >> 2) | ((value & 0x33) << 2));
+  value = (byte)(((value & 0xAA) >> 1) | ((value & 0x55) << 1));
+  return value;
+}
+
+static void ibMakeTm01xImage(byte* rom, byte prefix, uint32_t code) {
+  rom[0] = (byte)(((prefix & 0x0F) << 4) | (code >> 28));
+  rom[1] = (byte)(code >> 20);
+  rom[2] = (byte)(code >> 12);
+  rom[3] = (byte)(code >> 4);
+  rom[4] = (byte)((code & 0x0F) << 4);
+  rom[5] = 0;
+  rom[6] = 0;
+  rom[7] = 0;
+}
+
+static bool ibTm01xBeginWrite() {
+  iButtonWire->reset();
+  iButtonWire->write(0xC1);
+  iButtonWire->write_bit(1);
+  delay(5);
+
+  if (!iButtonWire->reset()) return false;
+  iButtonWire->write(0xC5);
+  return true;
+}
+
+static bool ibTm01xWriteFrame(byte prefix, uint32_t code, byte finalizeCmd) {
+  byte rom[8];
+  ibMakeTm01xImage(rom, prefix, code);
+
+  if (!ibTm01xBeginWrite()) return false;
+
+  for (byte bit = 0; bit < 36; bit++) {
+    bool raw = ((rom[bit / 8] >> (7 - (bit % 8))) & 1) != 0;
+    iButtonWire->write_bit(raw ? 0 : 1);
+    delay(5);
+  }
+
+  // Финализация необратима, поэтому сначала читаем и сверяем.
+  byte actual[8];
+  if (!iButtonWire->reset()) return false;
+  iButtonWire->write(0x33);
+  for (byte i = 0; i < 8; i++) actual[i] = iButtonWire->read();
+  for (byte i = 0; i < 5; i++) actual[i] = (byte)~ibReverseBits(actual[i]);
+  actual[4] &= 0xF0;
+  actual[5] = 0;
+  actual[6] = 0;
+  actual[7] = 0;
+  if (memcmp(actual, rom, sizeof(rom)) != 0) return false;
+
+  iButtonWire->reset();
+  iButtonWire->write(finalizeCmd);
+  iButtonWire->write_bit(1);
+  delay(10);
+  return true;
+}
+
+// Проверка содержимого таблетки по READ ROM — без порога CRC: стёртый ключ
+// это как раз восемь нулей, а readIButtonRaw такой ROM отвергает.
+static bool iButtonTargetMatches(const byte* target) {
+  if (iButtonWire == nullptr) return false;
+  byte check[8];
+  for (byte attempt = 0; attempt < 3; attempt++) {
+    if (iButtonWire->reset()) {
+      iButtonWire->skip();
+      iButtonWire->write(0x33);
+      for (byte i = 0; i < 8; i++) check[i] = iButtonWire->read();
+      if (memcmp(check, target, sizeof(check)) == 0) {
+        ibLineIdle();
+        return true;
+      }
+    }
+    delay(3);
+  }
+  ibLineIdle();
+  return false;
+}
+
+static bool iButtonWriteRomTarget(const byte* target) {
+  iButtonWriteStage = 1;
+
+  ibWriteBruce(target);
+  delay(50);
+  if (iButtonTargetMatches(target)) {
+    iButtonWriteStage = 0;
+    return true;
+  }
+
+  struct Variant {
+    byte cmd;
+    bool unlock;
+    bool drive;
+  };
+  static const Variant variants[] = {
+    {0xD5, true, false},
+    {0xD5, true, true},
+    {0xD5, false, false},
+    {0x0F, false, false},
+  };
+
+  for (byte v = 0; v < sizeof(variants) / sizeof(variants[0]); v++) {
+    if (variants[v].unlock) ibRw1990Unlock(variants[v].drive);
+    ibWriteSequence(target, variants[v].cmd, variants[v].drive);
+    delay(50);
+    if (iButtonTargetMatches(target)) {
+      iButtonWriteStage = 0;
+      return true;
+    }
+  }
+
+  bool acked = false;
+  if (ibRw1990Scratchpad(target, &acked)) {
+    delay(50);
+    if (iButtonTargetMatches(target)) {
+      iButtonWriteStage = 0;
+      return true;
+    }
+  }
+
+  iButtonWriteStage = acked ? 2 : 1;
+  return false;
+}
+
+bool writeIButtonKey() {
+  if (iButtonProto == 1) {
+    uint32_t code = ((uint32_t)iButtonBuffer[0] << 8) | iButtonBuffer[1];
+    iButtonWriteStage = ibTm01xWriteFrame(0x01, code, 0xCA) ? 0 : 1;
+    return iButtonWriteStage == 0;
+  }
+  if (iButtonProto == 2) {
+    uint32_t code = ((uint32_t)iButtonBuffer[0] << 24) | ((uint32_t)iButtonBuffer[1] << 16) |
+                    ((uint32_t)iButtonBuffer[2] << 8) | iButtonBuffer[3];
+    iButtonWriteStage = ibTm01xWriteFrame(0x02, code, 0xCB) ? 0 : 1;
+    return iButtonWriteStage == 0;
+  }
+  if (iButtonWire == nullptr) return false;
+  byte target[8];
+  memcpy(target, iButtonBuffer, sizeof(target));
+  return iButtonWriteRomTarget(target);
 }
 
 void stopIButtonEmulation() {
@@ -831,11 +1267,70 @@ void stopIButtonEmulation() {
   iButtonEmulatedKey = nullptr;
   iButtonHub = nullptr;
   iButtonEmulationActive = false;
+  ibLineIdle();
+}
+
+// ---- Эмуляция Cyfral / Metakom ----
+static void ibOut(bool high, uint32_t us) {
+  if (high) {
+    digitalWrite(iButtonPin, HIGH);
+    pinMode(iButtonPin, INPUT_PULLUP);
+  } else {
+    digitalWrite(iButtonPin, LOW);
+    pinMode(iButtonPin, OUTPUT);
+  }
+  delayMicroseconds(us);
+}
+
+static void ibEmulateCyfralFrame() {
+  uint16_t data = ((uint16_t)iButtonBuffer[0] << 8) | iButtonBuffer[1];
+  byte bits[40];
+  byte n = 0;
+  bits[n++] = 0; bits[n++] = 0; bits[n++] = 0; bits[n++] = 1;
+  for (int8_t i = 7; i >= 0; i--) {
+    byte nib;
+    switch ((data >> (i * 2)) & 3) {
+      case 3: nib = 0b1110; break;
+      case 2: nib = 0b1101; break;
+      case 1: nib = 0b1011; break;
+      default: nib = 0b0111; break;
+    }
+    for (int8_t b = 3; b >= 0; b--) bits[n++] = (nib >> b) & 1;
+  }
+  bits[n++] = 0; bits[n++] = 0; bits[n++] = 0; bits[n++] = 1;
+  for (byte i = 0; i < n; i++) {
+    ibOut(false, bits[i] ? 41 : 83);
+    ibOut(true, bits[i] ? 83 : 41);
+  }
+}
+
+static void ibEmulateMetakomFrame() {
+  uint32_t data = 0;
+  for (byte i = 0; i < 4; i++) data = (data << 8) | iButtonBuffer[i];
+  ibOut(false, 125);
+  static const byte startBits[3] = {0, 1, 0};
+  for (byte i = 0; i < 3; i++) {
+    ibOut(true, startBits[i] ? 83 : 41);
+    ibOut(false, startBits[i] ? 41 : 83);
+  }
+  for (int8_t b = 31; b >= 0; b--) {
+    bool one = ((data >> b) & 1) != 0;
+    ibOut(true, one ? 83 : 41);
+    ibOut(false, one ? 41 : 83);
+  }
 }
 
 bool startIButtonEmulation() {
   stopIButtonEmulation();
   iButtonPin = iButtonPins[iButtonPinIndex];
+  // Пин отдаётся эмулятору: два объекта на одной линии мешают друг другу.
+  delete iButtonWire;
+  iButtonWire = nullptr;
+  if (iButtonProto != 0) {
+    ibLineIdle();
+    iButtonEmulationActive = true;
+    return true;
+  }
   iButtonHub = new OneWireHub(iButtonPin);
   iButtonEmulatedKey = new DS2401(
     iButtonBuffer[0], iButtonBuffer[1], iButtonBuffer[2], iButtonBuffer[3],
@@ -967,7 +1462,7 @@ void displayIButtonWriteWaiting() {
   display.print(F("Code: "));
   printIButtonMarquee(formatIButtonCode(iButtonBuffer), 39, dataY, codeMarquee);
   dataY = 26;
-  String st = "Type: " + getIButtonTypeName(iButtonType);
+  String st = "Type: " + iButtonTypeLabel();
   display.setCursor(3, dataY);
   display.println(st);
   st = "Bits: " + String(iButtonBits);
@@ -978,7 +1473,7 @@ void displayIButtonWriteWaiting() {
   display.print(F("Pin:"));
   display.print(iButtonPinNames[iButtonPinIndex]);
   display.setCursor(67, 54);
-  display.print(F("Writing..."));
+  display.print(iButtonProto == 0 ? F("Writing...") : F("TM01x!"));
 
   display.display();
 }
@@ -1001,7 +1496,7 @@ void displayIButtonEmulating() {
   display.print(F("Code: "));
   printIButtonMarquee(code, 39, dataY, codeMarquee);
   dataY = 26;
-  String st = "Type: " + getIButtonTypeName(iButtonType);
+  String st = "Type: " + iButtonTypeLabel();
   display.setCursor(3, dataY);
   display.println(st);
   st = "Bits: " + String(iButtonBits);
@@ -1081,13 +1576,14 @@ bool saveIButtonToSD() {
   file.println(F("Filetype: Flipper iButton key"));
   file.println(F("Version: 1"));
   file.println(F("# Key type can be Cyfral, Dallas or Metakom"));
-  file.println(F("Key type: Dallas"));
+  file.print(F("Key type: "));
+  file.println(iButtonProto == 1 ? F("Cyfral") : (iButtonProto == 2 ? F("Metakom") : F("Dallas")));
   file.println(F("# Data size for Cyfral is 2, for Metakom is 4, for Dallas is 8"));
   file.print(F("Data: "));
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < iButtonDataLen; i++) {
     if (iButtonBuffer[i] < 0x10) file.print("0");
     file.print(iButtonBuffer[i], HEX);
-    if (i < 7) file.print(" ");
+    if (i < iButtonDataLen - 1) file.print(" ");
   }
   file.println();
   file.close();
@@ -1121,29 +1617,38 @@ bool loadIButtonFromSD(const String& fileName) {
     } else if (line.startsWith("Key type:")) {
       keyType = line.substring(9);
       keyType.trim();
-      supportedType = keyType.equalsIgnoreCase("Dallas");
+      if (keyType.equalsIgnoreCase("Dallas")) {
+        iButtonProto = 0;
+        iButtonDataLen = 8;
+      } else if (keyType.equalsIgnoreCase("Cyfral")) {
+        iButtonProto = 1;
+        iButtonDataLen = 2;
+      } else if (keyType.equalsIgnoreCase("Metakom")) {
+        iButtonProto = 2;
+        iButtonDataLen = 4;
+      } else {
+        supportedType = false;
+      }
     } else if (line.startsWith("Data:")) {
       String dataStr = line.substring(5);
       dataStr.trim();
       dataStr.replace(" ", "");
       dataStr.replace(":", "");
-      if (keyType.length() > 0 && !keyType.equalsIgnoreCase("Dallas")) {
-        supportedType = false;
-        continue;
-      }
-      if (dataStr.length() != 16) {
+      if (!supportedType) continue;
+      if (dataStr.length() != (unsigned int)(iButtonDataLen * 2)) {
         file.close();
         Serial.print(F("Unsupported iButton data size in "));
         Serial.println(fileName);
         return false;
       }
-      for (int i = 0; i < 8; i++) {
+      memset(iButtonBuffer, 0, sizeof(iButtonBuffer));
+      for (int i = 0; i < iButtonDataLen; i++) {
         String byteStr = dataStr.substring(i * 2, i * 2 + 2);
         iButtonBuffer[i] = strtol(byteStr.c_str(), nullptr, 16);
       }
       iButtonType = iButtonBuffer[0];
-      iButtonBits = 64;
-      iButtonCrcOk = OneWire::crc8(iButtonBuffer, 7) == iButtonBuffer[7];
+      iButtonBits = iButtonDataLen * 8;
+      iButtonCrcOk = (iButtonProto != 0) || (OneWire::crc8(iButtonBuffer, 7) == iButtonBuffer[7]);
       hasCode = true;
     } else if (line.startsWith("Code:") || line.startsWith("Key:")) {
       String codeStr = line.substring(line.indexOf(':') + 1);
@@ -1366,8 +1871,6 @@ void handleIButtonSubmenu() {
     );
     if (action == EXPLORER_SELECT_FILE) {
       if (loadIButtonFromSD(iButtonExplorer.selectedFile)) {
-        // The original iButton implementation uses GPIO2 as its TX line.
-        iButtonPinIndex = 1;
         if (startIButtonEmulation()) {
           iButtonState = IBUTTON_EMULATE_ACTIVE;
           displayIButtonEmulating();
@@ -1405,6 +1908,22 @@ void handleIButtonSubmenu() {
         display.print(F("Successfully"));
         display.display();
         delay(1000);
+      } else {
+        byte actual[8];
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(SH110X_WHITE);
+        display.setTextWrap(false);
+        display.setCursor(3, 3);
+        display.print(F("Write failed"));
+        display.setCursor(3, 15);
+        display.print(iButtonWriteStage == 1 ? F("key: no ack")
+                      : iButtonWriteStage == 3 ? F("key: read only")
+                                               : F("key: no store"));
+        display.setCursor(3, 27);
+        display.print(readIButtonAny(actual) ? formatIButtonCode(actual) : String("no key"));
+        display.display();
+        delay(2000);
       }
       displayIButtonWriteWaiting();
       iButtonWasPresent = true;
@@ -1421,8 +1940,10 @@ void handleIButtonSubmenu() {
       ExplorerDraw(iButtonExplorer, display);
       return;
     }
-    if (iButtonEmulationActive && iButtonHub != nullptr) {
-      iButtonHub->poll();
+    if (iButtonEmulationActive) {
+      if (iButtonProto == 0 && iButtonHub != nullptr) iButtonHub->poll();
+      else if (iButtonProto == 1) ibEmulateCyfralFrame();
+      else if (iButtonProto == 2) ibEmulateMetakomFrame();
     }
   }
 }

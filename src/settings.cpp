@@ -50,8 +50,8 @@ static const char* interfaceItems[] = {"Menu", "Submenu", "Color", "Standby", "B
 static const char* interfaceListItems[] = {"Menu", "Submenu", "Color", "Standby", "Boot Logo"};
 static const byte INTERFACE_ITEM_COUNT = sizeof(interfaceItems) / sizeof(interfaceItems[0]);
 static const SubmenuItems interfaceSubmenuItems = {interfaceItems, interfaceListItems, INTERFACE_ITEM_COUNT};
-static const byte MENU_STYLE_ITEM_COUNT = 4;
-static const char* menuStyleItems[] = {"Pages", "List", "Wii", "DSi"};
+static const byte MENU_STYLE_ITEM_COUNT = 5;
+static const char* menuStyleItems[] = {"Pages", "List", "Wii", "DSi", "Icons"};
 static const SubmenuItems menuStyleSubmenuItems = {
   menuStyleItems, menuStyleItems, MENU_STYLE_ITEM_COUNT
 };
@@ -359,7 +359,7 @@ void handleColorDetail(bool upClick, bool downClick, bool okClick, bool backClic
 
   if (upClick || downClick) {
     byte previousIndex = colorSelectionWorking;
-    colorSelectionWorking = colorSelectionWorking == 0 ? 1 : 0;
+    colorSelectionWorking = (byte)((colorSelectionWorking + 1) % COLOR_OPTION_COUNT);
     renderColorSetting(previousIndex);
   }
 
@@ -483,7 +483,7 @@ static void handleInterfaceMenu(bool upPress, bool downPress, bool okClick, bool
       saveConfig();
       renderInterfaceMenu();
     } else if (interfaceMenuIndex == 2) {
-      colorSelectionIndex = colorSelectionIndex == 0 ? 1 : 0;
+      colorSelectionIndex = (byte)((colorSelectionIndex + 1) % COLOR_OPTION_COUNT);
       applyColorScheme();
       saveConfig();
       renderInterfaceMenu();

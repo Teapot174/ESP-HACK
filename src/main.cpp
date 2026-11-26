@@ -70,8 +70,8 @@ extern const unsigned long standbyTimeoutOptionsMs[] = {0UL, 15000UL, 30000UL, 6
 const char* standbyTimeoutLabels[] = {"Disable", "15s", "30s", "1m", "3m", "5m", "10m", "30m"};
 const char* standbyTimeoutConfigValues[] = {"0", "15s", "30s", "1m", "3m", "5m", "10m", "30m"};
 extern const byte STANDBY_OPTION_COUNT = sizeof(standbyTimeoutOptionsMs) / sizeof(standbyTimeoutOptionsMs[0]);
-const char* colorOptions[] = {"White", "Black"};
-extern const byte COLOR_OPTION_COUNT = 2;
+const char* colorOptions[] = {"White", "Black", "Dim", "Night"};
+extern const byte COLOR_OPTION_COUNT = 4;
 const char* CONFIG_PATH = "/esphack.cfg";
 const char* DEFAULT_WIFI_PORTAL_NAME = "FREE WIFI";
 const char* DEFAULT_BLE_DEVICE_NAME = "ESP-BLE";
@@ -94,9 +94,23 @@ const int standby_SPEED = 2;
 const int standby_LOGO_WIDTH = 22;
 const int standby_LOGO_HEIGHT = 35;
 
+// Яркость задаётся командой 0x81 напрямую: dim() в библиотеке гасит экран в ноль.
+static void setDisplayContrast(byte level) {
+  Wire.beginTransmission(OLED_ADR);
+  Wire.write(0x00);
+  Wire.write(0x81);
+  Wire.write(level);
+  Wire.endTransmission();
+}
+
 void applyColorScheme() {
   if (colorSchemeLocked) return;
-  display.invertDisplay(colorSelectionIndex == 0);
+  // White — инверсия, Black — обычная, Dim — обычная с низким контрастом,
+  // Night — инверсия с низким контрастом.
+  bool inverted = (colorSelectionIndex == 0) || (colorSelectionIndex == 3);
+  bool dimmed = (colorSelectionIndex == 2) || (colorSelectionIndex == 3);
+  display.invertDisplay(inverted);
+  setDisplayContrast(dimmed ? 0x2F : 0xCF);
 }
 
 static void createSDDirectories() {
@@ -349,8 +363,8 @@ static bool loadAppearanceConfig() {
   AppearanceStorage stored;
   EEPROM.get(ESPHACK_APPEARANCE_EEPROM_ADDRESS, stored);
   if (stored.signature != APPEARANCE_STORAGE_SIGNATURE ||
-      stored.menu > 3 || stored.submenu > 1 ||
-      stored.color > 1 || stored.standby >= STANDBY_OPTION_COUNT) {
+      stored.menu > 4 || stored.submenu > 1 ||
+      stored.color > 3 || stored.standby >= STANDBY_OPTION_COUNT) {
     return false;
   }
   menu = stored.menu;
@@ -454,7 +468,7 @@ void loadConfig() {
         String val = line.substring(6);
         val.trim();
         val.toLowerCase();
-        legacyColor = val == "white" ? 0 : 1;
+        legacyColor = val == "white" ? 0 : (val == "dim" ? 2 : (val == "night" ? 3 : 1));
       } else if (line.startsWith("menu=")) {
         String val = line.substring(5);
         val.trim();
@@ -463,6 +477,8 @@ void loadConfig() {
           legacyMenu = 2;
         } else if (val == "dsi") {
           legacyMenu = 3;
+        } else if (val == "icons") {
+          legacyMenu = 4;
         } else {
           legacyMenu = (val == "flipper" || val == "list") ? 1 : 0;
         }

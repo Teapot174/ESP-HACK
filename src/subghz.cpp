@@ -271,6 +271,13 @@ static void syncCC1101PinsFromGPIOConfig() {
   byte newCSPin = getSubGHzCC1101CSPin();
   if (cc1101GDO0Pin == newGDO0Pin && cc1101CSPin == newCSPin) return;
 
+  // rc-switch держит прерывание на старом пине: без перезапуска приём
+  // остаётся привязанным к несуществующей линии.
+  if (rcSwitchReceiveEnabled) {
+    rcswitch.disableReceive();
+    rcSwitchReceiveEnabled = false;
+  }
+
   cc1101GDO0Pin = newGDO0Pin;
   cc1101CSPin = newCSPin;
   bruceConfig.rfTx = cc1101GDO0Pin;
@@ -285,6 +292,9 @@ static void prepareCC1101Pins() {
   pinMode(cc1101CSPin, OUTPUT);
   digitalWrite(cc1101CSPin, HIGH);
   ELECHOUSE_cc1101.setSpiPin(CC1101_SCK, CC1101_MISO, CC1101_MOSI, cc1101CSPin);
+  // Библиотека инициализирует SPI один раз за загрузку. Если до этого шину
+  // занял NRF24 со своими пинами, CC1101 остаётся без связи — перевешиваем шину.
+  SPI.begin(CC1101_SCK, CC1101_MISO, CC1101_MOSI);
   ELECHOUSE_cc1101.setGDO0(cc1101GDO0Pin);
   cc1101PinsReady = true;
 }
@@ -304,20 +314,24 @@ bool initRfModule(String mode, float freq) {
   if (!ensureCC1101Initialized()) {
     return false;
   }
+  // SCAL допустим только из IDLE: посланный после SetRx/SetTx он сбивает
+  // режим, и радио молча остаётся в IDLE.
+  ELECHOUSE_cc1101.SpiStrobe(0x36);
   ELECHOUSE_cc1101.setMHZ(freq);
   ELECHOUSE_cc1101.setModulation(2);
+  ELECHOUSE_cc1101.SpiStrobe(0x33);
+  delay(1);
   if (mode == "tx" || mode == "TX") {
     ELECHOUSE_cc1101.setSyncMode(0);
     ELECHOUSE_cc1101.setCrc(0);
     ELECHOUSE_cc1101.setPktFormat(3);
-    ELECHOUSE_cc1101.SetTx();
     pinMode(cc1101GDO0Pin, OUTPUT);
     digitalWrite(cc1101GDO0Pin, LOW);
+    ELECHOUSE_cc1101.SetTx();
   } else {
     ELECHOUSE_cc1101.setPktFormat(0);
     ELECHOUSE_cc1101.SetRx();
   }
-  ELECHOUSE_cc1101.SpiStrobe(0x33);
   delayMicroseconds(100);
   return true;
 }
@@ -325,8 +339,8 @@ bool initRfModule(String mode, float freq) {
 void deinitRfModule() {
   ELECHOUSE_cc1101.SpiStrobe(0x36);
   ELECHOUSE_cc1101.SetRx();
-  pinMode(cc1101GDO0Pin, OUTPUT);
-  digitalWrite(cc1101GDO0Pin, LOW);
+  // В приёме GDO0 — выход CC1101; прижимать его к земле нельзя.
+  pinMode(cc1101GDO0Pin, INPUT);
 }
 
 static void enableRcSwitchReceive() {
@@ -2189,6 +2203,12 @@ void sendSynthKey(tpKeyData* kd) {
   }
 
   deinitRfModule();
+
+  if (!transmissionSuccess) {
+    Serial.println(F("Nothing was transmitted"));
+    OLED_printError(F("Send failed"), true);
+    delay(1000);
+  }
 
   OLED_printKey(kd, subExplorer.selectedFile);
 }
